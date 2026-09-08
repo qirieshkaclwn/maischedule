@@ -1,10 +1,10 @@
 use chrono::{NaiveTime, Utc};
-use md5::{Digest as Md5Digest, Md5};
-use sha1::{Digest as Sha1Digest, Sha1};
+use md5::{Digest as _, Md5};
+use sha1::Sha1;
 
 use crate::models::{GroupSchedule, Lesson};
 
-fn escape_ical_text(text: &str) -> String {
+pub fn escape_ical_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 8);
     for c in text.chars() {
         match c {
@@ -19,7 +19,7 @@ fn escape_ical_text(text: &str) -> String {
     out
 }
 
-fn parse_naive_time(time_str: &str, default: NaiveTime) -> NaiveTime {
+pub fn parse_naive_time(time_str: &str, default: NaiveTime) -> NaiveTime {
     let parts: Vec<&str> = time_str.split(':').collect();
     if parts.len() >= 2 {
         if let (Ok(h), Ok(m)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
@@ -76,15 +76,28 @@ pub fn generate_ical(schedule: &GroupSchedule, alert_minutes: u32, tz_name: &str
     buf.push_str("END:STANDARD\r\n");
     buf.push_str("END:VTIMEZONE\r\n");
 
+    let fallback_start = NaiveTime::from_hms_opt(9, 0, 0).unwrap();
+    let fallback_end = NaiveTime::from_hms_opt(10, 30, 0).unwrap();
+
     for (date_str, day_sched) in &schedule.days {
         let lesson_date = day_sched.date;
 
         for lesson in &day_sched.lessons {
-            let start_t = parse_naive_time(&lesson.time_start, NaiveTime::from_hms_opt(9, 0, 0).unwrap());
-            let end_t = parse_naive_time(&lesson.time_end, NaiveTime::from_hms_opt(10, 30, 0).unwrap());
+            let start_t = parse_naive_time(&lesson.time_start, fallback_start);
+            let end_t = parse_naive_time(&lesson.time_end, fallback_end);
 
-            let dt_start = format!("{};TZID={}:{}T{}", "DTSTART", tz_name, lesson_date.format("%Y%m%d"), start_t.format("%H%M%S"));
-            let dt_end = format!("{};TZID={}:{}T{}", "DTEND", tz_name, lesson_date.format("%Y%m%d"), end_t.format("%H%M%S"));
+            let dt_start = format!(
+                "DTSTART;TZID={}:{}T{}",
+                tz_name,
+                lesson_date.format("%Y%m%d"),
+                start_t.format("%H%M%S")
+            );
+            let dt_end = format!(
+                "DTEND;TZID={}:{}T{}",
+                tz_name,
+                lesson_date.format("%Y%m%d"),
+                end_t.format("%H%M%S")
+            );
 
             let uid = generate_event_uid(&schedule.group, date_str, lesson);
             let summary = format!("[{}] {}", lesson.type_str(), lesson.subject);
@@ -130,4 +143,95 @@ pub fn generate_ical(schedule: &GroupSchedule, alert_minutes: u32, tz_name: &str
 
     buf.push_str("END:VCALENDAR\r\n");
     buf
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+    use std::collections::BTreeMap;
+    use crate::models::DaySchedule;
+
+    #[test]
+    fn test_escape_ical_text() {
+        assert_eq!(escape_ical_text("Hello, World;"), "Hello\\, World\\;");
+        assert_eq!(escape_ical_text("Line1\nLine2"), "Line1\\nLine2");
+        assert_eq!(escape_ical_text("Back\\slash"), "Back\\\\slash");
+    }
+
+    #[test]
+    fn test_parse_naive_time() {
+        let fallback = NaiveTime::from_hms_opt(12, 0, 0).unwrap();
+        assert_eq!(
+            parse_naive_time("09:30:00", fallback),
+            NaiveTime::from_hms_opt(9, 30, 0).unwrap()
+        );
+        assert_eq!(
+            parse_naive_time("14:15", fallback),
+            NaiveTime::from_hms_opt(14, 15, 0).unwrap()
+        );
+        assert_eq!(parse_naive_time("invalid", fallback), fallback);
+    }
+
+    #[test]
+    fn test_generate_event_uid() {
+        let lesson = Lesson {
+            subject: "Физика".to_string(),
+            time_start: "09:00:00".to_string(),
+            time_end: "10:30:00".to_string(),
+            rooms: vec![],
+            lectors: vec![],
+            lesson_types: vec![],
+            lms: None,
+            teams: None,
+            other: None,
+        };
+        let uid1 = generate_event_uid("М14О-101БВ-26", "2026-09-03", &lesson);
+        let uid2 = generate_event_uid("М14О-101БВ-26", "2026-09-03", &lesson);
+        assert_eq!(uid1, uid2);
+        assert!(uid1.starts_with("mai-"));
+        assert!(uid1.ends_with("@maischedule"));
+    }
+
+    #[test]
+    fn test_generate_ical() {
+        let date = NaiveDate::from_ymd_opt(2026, 9, 3).unwrap();
+        let lesson = Lesson {
+            subject: "Базы данных".to_string(),
+            time_start: "10:45:00".to_string(),
+            time_end: "12:15:00".to_string(),
+            rooms: vec!["ГУК Б-301".to_string()],
+            lectors: vec!["Кузнецов А. С.".to_string()],
+            lesson_types: vec!["ЛК".to_string()],
+            lms: Some("https://lms.mai.ru/course/123".to_string()),
+            teams: None,
+            other: None,
+        };
+
+        let mut days = BTreeMap::new();
+        days.insert(
+            "2026-09-03".to_string(),
+            DaySchedule {
+                date,
+                day_of_week: "Чт".to_string(),
+                lessons: vec![lesson],
+            },
+        );
+
+        let schedule = GroupSchedule {
+            group: "М14О-101БВ-26".to_string(),
+            days,
+        };
+
+        let ical = generate_ical(&schedule, 15, "Europe/Moscow");
+        assert!(ical.contains("BEGIN:VCALENDAR"));
+        assert!(ical.contains("END:VCALENDAR"));
+        assert!(ical.contains("X-WR-CALNAME:Расписание М14О-101БВ-26"));
+        assert!(ical.contains("SUMMARY:[ЛК] Базы данных"));
+        assert!(ical.contains("LOCATION:ГУК Б-301"));
+        assert!(ical.contains("Кузнецов А. С."));
+        assert!(ical.contains("https://lms.mai.ru/course/123"));
+        assert!(ical.contains("BEGIN:VALARM"));
+        assert!(ical.contains("TRIGGER:-PT15M"));
+    }
 }

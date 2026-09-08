@@ -1,0 +1,8 @@
+/target
+.env
+data/
+*.tar
+*.tar.gz
+.idea/
+Agents.md
+AGENTS.md

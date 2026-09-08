@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 use crate::models::{GroupSchedule, Lesson};
+use crate::utils::escape_html;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChangeType {
@@ -48,7 +49,7 @@ pub fn detect_diff(old_sched: &GroupSchedule, new_sched: &GroupSchedule) -> Vec<
     let mut changes = Vec::new();
 
     let mut old_map = HashMap::new();
-    for (_d_str, day) in &old_sched.days {
+    for day in old_sched.days.values() {
         for lesson in &day.lessons {
             let key = make_key(&day.date, lesson);
             old_map.insert(key, (day.date, day.day_of_week.clone(), lesson.clone()));
@@ -56,7 +57,7 @@ pub fn detect_diff(old_sched: &GroupSchedule, new_sched: &GroupSchedule) -> Vec<
     }
 
     let mut new_map = HashMap::new();
-    for (_d_str, day) in &new_sched.days {
+    for day in new_sched.days.values() {
         for lesson in &day.lessons {
             let key = make_key(&day.date, lesson);
             new_map.insert(key, (day.date, day.day_of_week.clone(), lesson.clone()));
@@ -147,7 +148,11 @@ pub fn detect_diff(old_sched: &GroupSchedule, new_sched: &GroupSchedule) -> Vec<
     let mut matched_added = HashSet::new();
 
     // Проверка переносов
-    for (r_idx, (r_date, r_day_name, r_lesson)) in removed_vec.iter().enumerate() {
+    for (r_idx, (r_date, _r_day_name, r_lesson)) in removed_vec.iter().enumerate() {
+        if matched_removed.contains(&r_idx) {
+            continue;
+        }
+
         for (a_idx, (a_date, a_day_name, a_lesson)) in added_vec.iter().enumerate() {
             if matched_added.contains(&a_idx) {
                 continue;
@@ -232,14 +237,16 @@ pub fn detect_diff(old_sched: &GroupSchedule, new_sched: &GroupSchedule) -> Vec<
 }
 
 pub fn format_diff_message(group_name: &str, changes: &[ScheduleChange]) -> String {
+    let safe_group = escape_html(group_name);
     if changes.is_empty() {
-        return format!("✅ Расписание группы {} проверено — изменений нет.", group_name);
+        return format!("Расписание группы {} проверено — изменений нет.", safe_group);
     }
 
     let mut cancelled = Vec::new();
     let mut moved = Vec::new();
     let mut room_changed = Vec::new();
     let mut lector_changed = Vec::new();
+    let mut type_changed = Vec::new();
     let mut added = Vec::new();
 
     for c in changes {
@@ -248,47 +255,52 @@ pub fn format_diff_message(group_name: &str, changes: &[ScheduleChange]) -> Stri
             ChangeType::Moved => moved.push(c),
             ChangeType::RoomChanged => room_changed.push(c),
             ChangeType::LectorChanged => lector_changed.push(c),
+            ChangeType::TypeChanged => type_changed.push(c),
             ChangeType::Added => added.push(c),
-            ChangeType::TypeChanged => {}
         }
     }
 
-    let mut out = format!("🔔 <b>Изменения в расписании группы {}!</b>\n\n", group_name);
+    let mut out = format!("<b>Изменения в расписании группы {}!</b>\n\n", safe_group);
 
     if !cancelled.is_empty() {
-        out.push_str("❌ <b>Отмена занятий:</b>\n");
+        out.push_str("<b>Отмена занятий:</b>\n");
         for c in cancelled {
             out.push_str(&format!(
-                "• <b>{} ({}) {}</b> — {}\n",
+                "- <b>{} ({}) {}</b> — {}\n",
                 c.date.format("%d.%m.%Y"),
-                c.day_name,
+                escape_html(&c.day_name),
                 c.time_start,
-                c.subject
+                escape_html(&c.subject)
             ));
         }
         out.push('\n');
     }
 
     if !moved.is_empty() {
-        out.push_str("🔄 <b>Перенос занятий:</b>\n");
+        out.push_str("<b>Перенос занятий:</b>\n");
         for c in moved {
-            let old = c.old_value.as_deref().unwrap_or("");
-            let new = c.new_value.as_deref().unwrap_or("");
-            out.push_str(&format!("• <b>{}</b>: с <s>{}</s> ➡️ на <b>{}</b>\n", c.subject, old, new));
+            let old = escape_html(c.old_value.as_deref().unwrap_or(""));
+            let new = escape_html(c.new_value.as_deref().unwrap_or(""));
+            out.push_str(&format!(
+                "- <b>{}</b>: с <s>{}</s> -> на <b>{}</b>\n",
+                escape_html(&c.subject),
+                old,
+                new
+            ));
         }
         out.push('\n');
     }
 
     if !room_changed.is_empty() {
-        out.push_str("🏢 <b>Изменение аудитории:</b>\n");
+        out.push_str("<b>Изменение аудитории:</b>\n");
         for c in room_changed {
-            let old = c.old_value.as_deref().unwrap_or("");
-            let new = c.new_value.as_deref().unwrap_or("");
+            let old = escape_html(c.old_value.as_deref().unwrap_or(""));
+            let new = escape_html(c.new_value.as_deref().unwrap_or(""));
             out.push_str(&format!(
-                "• <b>{} {}</b> — {}:\n   <s>{}</s> ➡️ <b>{}</b>\n",
+                "- <b>{} {}</b> — {}:\n   <s>{}</s> -> <b>{}</b>\n",
                 c.date.format("%d.%m"),
                 c.time_start,
-                c.subject,
+                escape_html(&c.subject),
                 old,
                 new
             ));
@@ -297,15 +309,32 @@ pub fn format_diff_message(group_name: &str, changes: &[ScheduleChange]) -> Stri
     }
 
     if !lector_changed.is_empty() {
-        out.push_str("👨‍🏫 <b>Смена преподавателя:</b>\n");
+        out.push_str("<b>Смена преподавателя:</b>\n");
         for c in lector_changed {
-            let old = c.old_value.as_deref().unwrap_or("");
-            let new = c.new_value.as_deref().unwrap_or("");
+            let old = escape_html(c.old_value.as_deref().unwrap_or(""));
+            let new = escape_html(c.new_value.as_deref().unwrap_or(""));
             out.push_str(&format!(
-                "• <b>{} {}</b> — {}:\n   <s>{}</s> ➡️ <b>{}</b>\n",
+                "- <b>{} {}</b> — {}:\n   <s>{}</s> -> <b>{}</b>\n",
                 c.date.format("%d.%m"),
                 c.time_start,
-                c.subject,
+                escape_html(&c.subject),
+                old,
+                new
+            ));
+        }
+        out.push('\n');
+    }
+
+    if !type_changed.is_empty() {
+        out.push_str("<b>Изменение типа занятия:</b>\n");
+        for c in type_changed {
+            let old = escape_html(c.old_value.as_deref().unwrap_or(""));
+            let new = escape_html(c.new_value.as_deref().unwrap_or(""));
+            out.push_str(&format!(
+                "- <b>{} {}</b> — {}:\n   <s>{}</s> -> <b>{}</b>\n",
+                c.date.format("%d.%m"),
+                c.time_start,
+                escape_html(&c.subject),
                 old,
                 new
             ));
@@ -314,25 +343,250 @@ pub fn format_diff_message(group_name: &str, changes: &[ScheduleChange]) -> Stri
     }
 
     if !added.is_empty() {
-        out.push_str("➕ <b>Добавлены новые занятия:</b>\n");
+        out.push_str("<b>Добавлены новые занятия:</b>\n");
         for c in added {
             let room_info = c
                 .new_value
                 .as_ref()
-                .map(|r| format!(" (ауд. {})", r))
+                .map(|r| format!(" (ауд. {})", escape_html(r)))
                 .unwrap_or_default();
             out.push_str(&format!(
-                "• <b>{} ({}) {}</b> — {}{}\n",
+                "- <b>{} ({}) {}</b> — {}{}\n",
                 c.date.format("%d.%m.%Y"),
-                c.day_name,
+                escape_html(&c.day_name),
                 c.time_start,
-                c.subject,
+                escape_html(&c.subject),
                 room_info
             ));
         }
         out.push('\n');
     }
 
-    out.push_str("<i>📱 События в календаре на iPhone синхронизируются автоматически.</i>");
+    out.push_str("<i>События в календаре на iPhone синхронизируются автоматически.</i>");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::DaySchedule;
+    use std::collections::BTreeMap;
+
+    fn make_lesson(
+        subject: &str,
+        start: &str,
+        end: &str,
+        room: &str,
+        lectors: Vec<&str>,
+        types: Vec<&str>,
+    ) -> Lesson {
+        Lesson {
+            subject: subject.to_string(),
+            time_start: start.to_string(),
+            time_end: end.to_string(),
+            rooms: vec![room.to_string()],
+            lectors: lectors.into_iter().map(ToString::to_string).collect(),
+            lesson_types: types.into_iter().map(ToString::to_string).collect(),
+            lms: None,
+            teams: None,
+            other: None,
+        }
+    }
+
+    fn make_schedule(date: NaiveDate, day_of_week: &str, lessons: Vec<Lesson>) -> GroupSchedule {
+        let mut days = BTreeMap::new();
+        days.insert(
+            date.format("%Y-%m-%d").to_string(),
+            DaySchedule {
+                date,
+                day_of_week: day_of_week.to_string(),
+                lessons,
+            },
+        );
+        GroupSchedule {
+            group: "TEST-1".to_string(),
+            days,
+        }
+    }
+
+    #[test]
+    fn test_detect_room_and_lector_changes() {
+        let d = NaiveDate::from_ymd_opt(2026, 9, 3).unwrap();
+        let old_sched = make_schedule(
+            d,
+            "Чт",
+            vec![make_lesson(
+                "Физика",
+                "09:00:00",
+                "10:30:00",
+                "101",
+                vec!["Иванов"],
+                vec!["ЛК"],
+            )],
+        );
+        let new_sched = make_schedule(
+            d,
+            "Чт",
+            vec![make_lesson(
+                "Физика",
+                "09:00:00",
+                "10:30:00",
+                "202",
+                vec!["Петров"],
+                vec!["ЛК"],
+            )],
+        );
+
+        let diff = detect_diff(&old_sched, &new_sched);
+        let types: Vec<ChangeType> = diff.iter().map(|c| c.change_type.clone()).collect();
+        assert!(types.contains(&ChangeType::RoomChanged));
+        assert!(types.contains(&ChangeType::LectorChanged));
+
+        let msg = format_diff_message("TEST-1", &diff);
+        assert!(msg.contains("Изменение аудитории"));
+        assert!(msg.contains("202"));
+        assert!(msg.contains("Смена преподавателя"));
+        assert!(msg.contains("Петров"));
+    }
+
+    #[test]
+    fn test_detect_moved_lesson() {
+        let d1 = NaiveDate::from_ymd_opt(2026, 9, 3).unwrap();
+        let d2 = NaiveDate::from_ymd_opt(2026, 9, 4).unwrap();
+
+        let old_sched = make_schedule(
+            d1,
+            "Чт",
+            vec![make_lesson(
+                "Математика",
+                "09:00:00",
+                "10:30:00",
+                "101",
+                vec!["Иванов"],
+                vec!["ЛК"],
+            )],
+        );
+        let new_sched = make_schedule(
+            d2,
+            "Пт",
+            vec![make_lesson(
+                "Математика",
+                "10:45:00",
+                "12:15:00",
+                "101",
+                vec!["Иванов"],
+                vec!["ЛК"],
+            )],
+        );
+
+        let diff = detect_diff(&old_sched, &new_sched);
+        assert_eq!(diff.len(), 1);
+        assert_eq!(diff[0].change_type, ChangeType::Moved);
+        assert_eq!(diff[0].subject, "Математика");
+        assert_eq!(diff[0].old_date, Some(d1));
+        assert_eq!(diff[0].date, d2);
+
+        let msg = format_diff_message("TEST-1", &diff);
+        assert!(msg.contains("Перенос занятий"));
+    }
+
+    #[test]
+    fn test_detect_cancelled_and_added() {
+        let d = NaiveDate::from_ymd_opt(2026, 9, 3).unwrap();
+        let old_sched = make_schedule(
+            d,
+            "Чт",
+            vec![make_lesson(
+                "История",
+                "09:00:00",
+                "10:30:00",
+                "101",
+                vec![],
+                vec!["ЛК"],
+            )],
+        );
+        let new_sched = make_schedule(
+            d,
+            "Чт",
+            vec![make_lesson(
+                "Информатика",
+                "10:45:00",
+                "12:15:00",
+                "102",
+                vec![],
+                vec!["ПЗ"],
+            )],
+        );
+
+        let diff = detect_diff(&old_sched, &new_sched);
+        let types: Vec<ChangeType> = diff.iter().map(|c| c.change_type.clone()).collect();
+        assert!(types.contains(&ChangeType::Cancelled));
+        assert!(types.contains(&ChangeType::Added));
+
+        let msg = format_diff_message("TEST-1", &diff);
+        assert!(msg.contains("Отмена занятий"));
+        assert!(msg.contains("История"));
+        assert!(msg.contains("Добавлены новые занятия"));
+        assert!(msg.contains("Информатика"));
+    }
+
+    #[test]
+    fn test_detect_type_changed() {
+        let d = NaiveDate::from_ymd_opt(2026, 9, 3).unwrap();
+        let old_sched = make_schedule(
+            d,
+            "Чт",
+            vec![make_lesson(
+                "Физика",
+                "09:00:00",
+                "10:30:00",
+                "101",
+                vec![],
+                vec!["Лекция"],
+            )],
+        );
+        let new_sched = make_schedule(
+            d,
+            "Чт",
+            vec![make_lesson(
+                "Физика",
+                "09:00:00",
+                "10:30:00",
+                "101",
+                vec![],
+                vec!["Практика"],
+            )],
+        );
+
+        let diff = detect_diff(&old_sched, &new_sched);
+        assert_eq!(diff.len(), 1);
+        assert_eq!(diff[0].change_type, ChangeType::TypeChanged);
+
+        let msg = format_diff_message("TEST-1", &diff);
+        assert!(msg.contains("Изменение типа занятия"));
+        assert!(msg.contains("Лекция"));
+        assert!(msg.contains("Практика"));
+    }
+
+    #[test]
+    fn test_format_diff_message_html_escape() {
+        let d = NaiveDate::from_ymd_opt(2026, 9, 3).unwrap();
+        let changes = vec![ScheduleChange {
+            change_type: ChangeType::Cancelled,
+            subject: "C++ & Алгоритмы <1>".to_string(),
+            date: d,
+            day_name: "Чт".to_string(),
+            time_start: "09:00".to_string(),
+            time_end: "10:30".to_string(),
+            old_date: None,
+            old_time_start: None,
+            old_value: None,
+            new_value: None,
+            details: "cancelled".to_string(),
+        }];
+
+        let msg = format_diff_message("TEST <&>", &changes);
+        assert!(msg.contains("TEST &lt;&amp;&gt;"));
+        assert!(msg.contains("C++ &amp; Алгоритмы &lt;1&gt;"));
+    }
 }

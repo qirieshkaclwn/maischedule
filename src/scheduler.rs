@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::time::Duration;
+use tokio::sync::watch;
 use tracing::{error, info, warn};
 
 use crate::api::fetch_schedule;
@@ -13,6 +14,7 @@ pub async fn run_scheduler(
     config: Config,
     client: reqwest::Client,
     bot: Option<TelegramBot>,
+    mut shutdown: watch::Receiver<bool>,
 ) {
     let interval = Duration::from_secs(config.check_interval_minutes.max(1) * 60);
     info!(
@@ -20,8 +22,14 @@ pub async fn run_scheduler(
         config.check_interval_minutes
     );
 
-    // Пауза 5 секунд перед первым запуском
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    // Пауза 5 секунд перед первым запуском (прерываемая сигналом остановки)
+    tokio::select! {
+        _ = shutdown.changed() => {
+            info!("Остановка планировщика до первого запуска...");
+            return;
+        }
+        _ = tokio::time::sleep(Duration::from_secs(5)) => {}
+    }
 
     loop {
         let mut groups = match db.get_all_monitored_groups().await {
@@ -32,13 +40,19 @@ pub async fn run_scheduler(
             }
         };
 
-        if !groups.contains(&config.default_group) {
-            groups.push(config.default_group.clone());
+        let default_grp = config.default_group.trim();
+        if !default_grp.is_empty() && !groups.iter().any(|g| g == default_grp) {
+            groups.push(default_grp.to_string());
         }
 
         info!("Периодическая проверка расписания для групп: {:?}", groups);
 
         for group in groups {
+            if *shutdown.borrow() {
+                info!("Остановка планировщика во время обхода групп...");
+                return;
+            }
+
             match fetch_schedule(&client, &group).await {
                 Ok(new_sched) => {
                     match db.get_snapshot(&group).await {
@@ -85,6 +99,12 @@ pub async fn run_scheduler(
             }
         }
 
-        tokio::time::sleep(interval).await;
+        tokio::select! {
+            _ = shutdown.changed() => {
+                info!("Остановка планировщика...");
+                break;
+            }
+            _ = tokio::time::sleep(interval) => {}
+        }
     }
 }

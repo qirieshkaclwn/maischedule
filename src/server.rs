@@ -6,14 +6,14 @@ use axum::{
     Json, Router,
 };
 use serde_json::json;
-use std::sync::Arc;
-use tracing::{error, info};
+use tracing::error;
 
 use crate::api::fetch_schedule;
 use crate::calendar::generate_ical;
 use crate::config::Config;
 use crate::db::Database;
 use crate::telegram::get_webcal_links;
+use crate::utils::{escape_html, url_decode};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -27,6 +27,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/health", get(health_handler))
         .route("/calendar/:group", get(calendar_handler))
         .route("/webcal/:group", get(calendar_handler))
+        .route("/subscribe/:group", get(subscribe_handler))
         .route("/", get(index_handler))
         .with_state(state)
 }
@@ -43,15 +44,16 @@ async fn calendar_handler(
     AxumPath(group_param): AxumPath<String>,
     State(state): State<AppState>,
 ) -> Response {
-    let clean_group = group_param.trim_end_matches(".ics").trim();
+    let raw = group_param.trim_end_matches(".ics").trim();
+    let clean_group = url_decode(raw);
     if clean_group.is_empty() {
         return (StatusCode::BAD_REQUEST, "Имя группы не может быть пустым").into_response();
     }
 
     // Сначала ищем в кэше БД, если нет — загружаем по API
-    let schedule = match state.db.get_snapshot(clean_group).await {
+    let schedule = match state.db.get_snapshot(&clean_group).await {
         Ok(Some(s)) => s,
-        _ => match fetch_schedule(&state.client, clean_group).await {
+        _ => match fetch_schedule(&state.client, &clean_group).await {
             Ok(s) => {
                 let _ = state.db.save_snapshot(&s).await;
                 s
@@ -90,17 +92,35 @@ async fn calendar_handler(
     (StatusCode::OK, headers, ics_content).into_response()
 }
 
+async fn subscribe_handler(
+    AxumPath(group_param): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Html<String> {
+    let raw = group_param.trim_end_matches(".ics").trim();
+    let clean_group = url_decode(raw);
+    Html(render_subscribe_html(&state.config, &clean_group))
+}
+
 async fn index_handler(State(state): State<AppState>) -> Html<String> {
     let default_grp = &state.config.default_group;
-    let (webcal_link, https_link) = get_webcal_links(&state.config, default_grp);
+    Html(render_subscribe_html(&state.config, default_grp))
+}
 
-    let html = format!(
+fn render_subscribe_html(config: &Config, group: &str) -> String {
+    let (webcal_link, https_link) = get_webcal_links(config, group);
+
+    format!(
         r#"<!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Синхронизация расписания МАИ с iPhone</title>
+    <title>Подключение календаря МАИ</title>
+    <script>
+        if (/iPhone|iPad|iPod|Macintosh/i.test(navigator.userAgent)) {{
+            window.location.href = "{webcal_link}";
+        }}
+    </script>
     <style>
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -123,9 +143,6 @@ async fn index_handler(State(state): State<AppState>) -> Html<String> {
             font-size: 24px;
             margin-top: 0;
             color: #007aff;
-            display: flex;
-            align-items: center;
-            gap: 10px;
         }}
         .badge {{
             display: inline-block;
@@ -179,30 +196,65 @@ async fn index_handler(State(state): State<AppState>) -> Html<String> {
 </head>
 <body>
     <div class="card">
-        <h1>📅 Расписание МАИ (Rust)</h1>
+        <h1>Расписание МАИ (Rust)</h1>
         <p>Автоматическая синхронизация расписания с Apple Calendar на iPhone и Mac.</p>
-        <p>Текущая группа: <span class="badge">{}</span></p>
+        <p>Текущая группа: <span class="badge">{group}</span></p>
 
-        <a href="{}" class="button">📲 Добавить в Календарь на iPhone</a>
+        <a href="{webcal_link}" class="button">Добавить в Календарь на iPhone</a>
 
         <div class="instructions">
             <b>Как добавить календарь вручную на iPhone:</b>
             <ol>
                 <li>Откройте <b>«Настройки»</b> на iPhone.</li>
-                <li>Перейдите в <b>«Календарь»</b> ➡️ <b>«Учетные записи»</b>.</li>
-                <li>Нажмите <b>«Добавить учетную запись»</b> ➡️ <b>«Другое»</b> ➡️ <b>«Подписной календарь»</b>.</li>
+                <li>Перейдите в <b>«Календарь»</b> -&gt; <b>«Учетные записи»</b>.</li>
+                <li>Нажмите <b>«Добавить учетную запись»</b> -&gt; <b>«Другое»</b> -&gt; <b>«Подписной календарь»</b>.</li>
                 <li>Вставьте ссылку на подписку:
-                    <div class="link-box">{}</div>
+                    <div class="link-box">{https_link}</div>
                 </li>
                 <li>В параметрах установите <b>«Автообновление»</b>: <i>Каждые 15 минут</i>.</li>
             </ol>
         </div>
     </div>
 </body>
-</html>
-"#,
-        default_grp, webcal_link, https_link
-    );
+</html>"#,
+        webcal_link = webcal_link,
+        group = escape_html(group),
+        https_link = https_link
+    )
+}
 
-    Html(html)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_health_handler() {
+        let response = health_handler().await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_index_handler() {
+        let config = Config {
+            bot_token: "".to_string(),
+            telegram_chat_id: None,
+            default_group: "М14О-101БВ-26".to_string(),
+            host: "0.0.0.0".to_string(),
+            port: 8000,
+            base_url: "http://localhost:8000".to_string(),
+            check_interval_minutes: 30,
+            db_path: ":memory:".to_string(),
+            timezone: "Europe/Moscow".to_string(),
+            alert_minutes_before: 15,
+        };
+        let db = Database::new(":memory:").unwrap();
+        let client = reqwest::Client::new();
+        let state = AppState { db, config, client };
+
+        let html_response = index_handler(State(state)).await;
+        let body = html_response.0;
+        assert!(body.contains("Расписание МАИ"));
+        assert!(body.contains("М14О-101БВ-26"));
+        assert!(body.contains("webcal://"));
+    }
 }

@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 use crate::models::{DaySchedule, GroupInfo, GroupSchedule, Lesson};
 
+#[allow(dead_code)]
 pub const GROUPS_URL: &str = "https://public.mai.ru/schedule/data/groups.json";
 pub const SCHEDULE_URL_TEMPLATE: &str = "https://public.mai.ru/schedule/data/{md5}.json";
 pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -16,6 +17,7 @@ pub fn get_group_hash(group_name: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+#[allow(dead_code)]
 pub async fn fetch_groups(client: &reqwest::Client) -> Result<Vec<GroupInfo>> {
     let resp = client
         .get(GROUPS_URL)
@@ -64,6 +66,7 @@ pub fn parse_schedule_json(raw: Value, fallback_group: &str) -> Result<GroupSche
         .get("group")
         .and_then(|v| v.as_str())
         .unwrap_or(fallback_group)
+        .trim()
         .to_string();
 
     let mut days: BTreeMap<String, DaySchedule> = BTreeMap::new();
@@ -74,125 +77,192 @@ pub fn parse_schedule_json(raw: Value, fallback_group: &str) -> Result<GroupSche
         }
 
         // Парсим дату формата "DD.MM.YYYY" (например, "03.09.2026")
-        let date = match NaiveDate::parse_from_str(key, "%d.%m.%Y") {
-            Ok(d) => d,
-            Err(_) => continue,
-        };
+        if let Ok(date) = NaiveDate::parse_from_str(key, "%d.%m.%Y") {
+            if let Some(day_sched) = parse_day_schedule(date, val) {
+                let iso_key = date.format("%Y-%m-%d").to_string();
+                days.insert(iso_key, day_sched);
+            }
+        }
+    }
 
-        let day_obj = match val.as_object() {
-            Some(o) => o,
-            None => continue,
-        };
+    Ok(GroupSchedule { group, days })
+}
 
-        let day_of_week = day_obj
-            .get("day")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+fn parse_day_schedule(date: NaiveDate, val: &Value) -> Option<DaySchedule> {
+    let day_obj = val.as_object()?;
+    let day_of_week = day_obj
+        .get("day")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
-        let mut lessons: Vec<Lesson> = Vec::new();
+    let mut lessons = day_obj
+        .get("pairs")
+        .and_then(parse_lessons_from_pairs)
+        .unwrap_or_default();
 
-        if let Some(pairs_obj) = day_obj.get("pairs").and_then(|v| v.as_object()) {
-            for (time_key, subjects_val) in pairs_obj {
-                if let Some(subjects_obj) = subjects_val.as_object() {
-                    for (subject_name, lesson_val) in subjects_obj {
-                        if let Some(l_obj) = lesson_val.as_object() {
-                            let time_start = l_obj
-                                .get("time_start")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or(time_key)
-                                .to_string();
+    lessons.sort_by_key(|a| a.time_start_clean());
 
-                            let time_end = l_obj
-                                .get("time_end")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
+    Some(DaySchedule {
+        date,
+        day_of_week,
+        lessons,
+    })
+}
 
-                            // Преподаватели
-                            let mut lectors = Vec::new();
-                            if let Some(l_dict) = l_obj.get("lector").and_then(|v| v.as_object()) {
-                                for name_val in l_dict.values() {
-                                    if let Some(name) = name_val.as_str() {
-                                        let t = name.trim();
-                                        if !t.is_empty() {
-                                            lectors.push(t.to_string());
-                                        }
-                                    }
-                                }
-                            }
+fn parse_lessons_from_pairs(pairs_val: &Value) -> Option<Vec<Lesson>> {
+    let pairs_obj = pairs_val.as_object()?;
+    let mut lessons = Vec::new();
 
-                            // Типы занятия
-                            let mut lesson_types = Vec::new();
-                            if let Some(t_dict) = l_obj.get("type").and_then(|v| v.as_object()) {
-                                for t_name in t_dict.keys() {
-                                    let t = t_name.trim();
-                                    if !t.is_empty() {
-                                        lesson_types.push(t.to_string());
-                                    }
-                                }
-                            }
+    for (time_key, subjects_val) in pairs_obj {
+        if let Some(subjects_obj) = subjects_val.as_object() {
+            for (subject_name, lesson_val) in subjects_obj {
+                if let Some(l_obj) = lesson_val.as_object() {
+                    let time_start = l_obj
+                        .get("time_start")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(time_key)
+                        .to_string();
 
-                            // Аудитории
-                            let mut rooms = Vec::new();
-                            if let Some(r_dict) = l_obj.get("room").and_then(|v| v.as_object()) {
-                                for r_val in r_dict.values() {
-                                    if let Some(r_name) = r_val.as_str() {
-                                        let t = r_name.trim();
-                                        if !t.is_empty() {
-                                            rooms.push(t.to_string());
-                                        }
-                                    }
-                                }
-                            }
+                    let time_end = l_obj
+                        .get("time_end")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
 
-                            let lms = l_obj
-                                .get("lms")
-                                .and_then(|v| v.as_str())
-                                .filter(|s| !s.trim().is_empty())
-                                .map(|s| s.to_string());
+                    let lectors = extract_dict_values(l_obj.get("lector"));
+                    let lesson_types = extract_dict_keys(l_obj.get("type"));
+                    let rooms = extract_dict_values(l_obj.get("room"));
+                    let lms = extract_non_empty_str(l_obj.get("lms"));
+                    let teams = extract_non_empty_str(l_obj.get("teams"));
+                    let other = extract_non_empty_str(l_obj.get("other"));
 
-                            let teams = l_obj
-                                .get("teams")
-                                .and_then(|v| v.as_str())
-                                .filter(|s| !s.trim().is_empty())
-                                .map(|s| s.to_string());
+                    lessons.push(Lesson {
+                        subject: subject_name.trim().to_string(),
+                        time_start,
+                        time_end,
+                        lectors,
+                        lesson_types,
+                        rooms,
+                        lms,
+                        teams,
+                        other,
+                    });
+                }
+            }
+        }
+    }
 
-                            let other = l_obj
-                                .get("other")
-                                .and_then(|v| v.as_str())
-                                .filter(|s| !s.trim().is_empty())
-                                .map(|s| s.to_string());
+    Some(lessons)
+}
 
-                            lessons.push(Lesson {
-                                subject: subject_name.trim().to_string(),
-                                time_start,
-                                time_end,
-                                lectors,
-                                lesson_types,
-                                rooms,
-                                lms,
-                                teams,
-                                other,
-                            });
+fn extract_dict_values(val: Option<&Value>) -> Vec<String> {
+    val.and_then(|v| v.as_object())
+        .map(|dict| {
+            dict.values()
+                .filter_map(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn extract_dict_keys(val: Option<&Value>) -> Vec<String> {
+    val.and_then(|v| v.as_object())
+        .map(|dict| {
+            dict.keys()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn extract_non_empty_str(val: Option<&Value>) -> Option<String> {
+    val.and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_get_group_hash() {
+        assert_eq!(
+            get_group_hash("М14О-101БВ-26"),
+            "debcbad33560cdb3b93c753df8221a3d"
+        );
+        // Trimming check
+        assert_eq!(
+            get_group_hash("  М14О-101БВ-26  "),
+            "debcbad33560cdb3b93c753df8221a3d"
+        );
+    }
+
+    #[test]
+    fn test_parse_schedule_json() {
+        let raw = json!({
+            "group": "М14О-101БВ-26",
+            "03.09.2026": {
+                "day": "Чт",
+                "pairs": {
+                    "9:00:00": {
+                        "История России": {
+                            "time_start": "9:00:00",
+                            "time_end": "10:30:00",
+                            "lector": { "guid1": "Студников Павел Евгеньевич" },
+                            "type": { "ЛК": 1 },
+                            "room": { "room1": "Орш. А-301" },
+                            "lms": "https://lms.mai.ru",
+                            "teams": "",
+                            "other": ""
+                        }
+                    },
+                    "10:45:00": {
+                        "Линейная алгебра": {
+                            "time_start": "10:45:00",
+                            "time_end": "12:15:00",
+                            "lector": {},
+                            "type": { "ПЗ": 1 },
+                            "room": { "room2": "Орш. А-304" },
+                            "lms": "",
+                            "teams": "",
+                            "other": ""
                         }
                     }
                 }
             }
-        }
+        });
 
-        lessons.sort_by(|a, b| a.time_start_clean().cmp(&b.time_start_clean()));
+        let sched = parse_schedule_json(raw, "FALLBACK").unwrap();
+        assert_eq!(sched.group, "М14О-101БВ-26");
+        assert_eq!(sched.days.len(), 1);
 
-        let iso_key = date.format("%Y-%m-%d").to_string();
-        days.insert(
-            iso_key,
-            DaySchedule {
-                date,
-                day_of_week,
-                lessons,
-            },
-        );
+        let day = sched.days.get("2026-09-03").expect("Day 2026-09-03 should exist");
+        assert_eq!(day.day_of_week, "Чт");
+        assert_eq!(day.lessons.len(), 2);
+
+        let l1 = &day.lessons[0];
+        assert_eq!(l1.subject, "История России");
+        assert_eq!(l1.time_start_clean(), "09:00");
+        assert_eq!(l1.time_end_clean(), "10:30");
+        assert_eq!(l1.type_str(), "ЛК");
+        assert_eq!(l1.lector_str(), "Студников Павел Евгеньевич");
+        assert_eq!(l1.room_str(), "Орш. А-301");
+        assert_eq!(l1.lms.as_deref(), Some("https://lms.mai.ru"));
+
+        let l2 = &day.lessons[1];
+        assert_eq!(l2.subject, "Линейная алгебра");
+        assert_eq!(l2.time_start_clean(), "10:45");
+        assert_eq!(l2.type_str(), "ПЗ");
+        assert_eq!(l2.lector_str(), "Преподаватель не указан");
+        assert_eq!(l2.room_str(), "Орш. А-304");
     }
-
-    Ok(GroupSchedule { group, days })
 }

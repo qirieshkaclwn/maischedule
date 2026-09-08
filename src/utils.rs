@@ -39,6 +39,50 @@ pub fn strip_emojis(input: &str) -> String {
     input.chars().filter(|&c| !is_emoji(c)).collect()
 }
 
+/// Percent-encodes a string for safe inclusion in URLs.
+pub fn url_encode(input: &str) -> String {
+    let mut result = String::new();
+    for b in input.bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                result.push(b as char);
+            }
+            _ => {
+                result.push_str(&format!("%{:02X}", b));
+            }
+        }
+    }
+    result
+}
+
+/// Decodes a percent-encoded URL string.
+pub fn url_decode(input: &str) -> String {
+    let mut bytes = Vec::new();
+    let mut chars = input.bytes().peekable();
+    while let Some(b) = chars.next() {
+        if b == b'%' {
+            let h1 = chars.next();
+            let h2 = chars.next();
+            if let (Some(c1), Some(c2)) = (h1, h2) {
+                if let Ok(val) = u8::from_str_radix(std::str::from_utf8(&[c1, c2]).unwrap_or(""), 16) {
+                    bytes.push(val);
+                    continue;
+                }
+                bytes.push(b'%');
+                bytes.push(c1);
+                bytes.push(c2);
+            } else {
+                bytes.push(b'%');
+            }
+        } else if b == b'+' {
+            bytes.push(b' ');
+        } else {
+            bytes.push(b);
+        }
+    }
+    String::from_utf8_lossy(&bytes).to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,6 +103,15 @@ mod tests {
     }
 
     #[test]
+    fn test_url_encode_decode() {
+        let original = "М3О-309БВ-24";
+        let encoded = url_encode(original);
+        assert!(encoded.contains('%'));
+        let decoded = url_decode(&encoded);
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
     fn test_no_emojis_in_source_and_docs() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let check_files = [
@@ -69,6 +122,7 @@ mod tests {
             "docker-compose.yml",
             ".env.example",
             ".gitignore",
+            "deploy.ps1",
             "scripts/deploy.ps1",
             "scripts/deploy.sh",
             "src/main.rs",
