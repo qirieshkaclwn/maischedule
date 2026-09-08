@@ -70,11 +70,13 @@ try {
 
     # Step 5: Backup DB, load image and start container
     Write-Host "[5/6] Backing up database, loading image and starting container on server..."
-    $deployCmd = "cd $RemoteDir && if [ -f data/maischedule.db ]; then cp data/maischedule.db backups/maischedule_\$(date +%Y%m%d_%H%M%S).db && (ls -t backups/*.db 2>/dev/null | tail -n +6 | xargs -r rm -f --); fi && docker load -i maischedule.tar && docker compose up -d && rm -f maischedule.tar maischedule.tar.gz && docker image prune -f"
+    $backupTime = Get-Date -Format "yyyyMMdd_HHmmss"
+    $deployCmd = "cd $RemoteDir && if [ -f data/maischedule.db ]; then cp data/maischedule.db backups/maischedule_$backupTime.db && (ls -t backups/*.db 2>/dev/null | tail -n +6 | xargs -r rm -f --); fi && docker load -i maischedule.tar && docker compose up -d && rm -f maischedule.tar maischedule.tar.gz && docker image prune -f"
     ssh $remoteTarget $deployCmd
     if ($LASTEXITCODE -ne 0) {
         throw "Remote deployment commands failed"
     }
+
 
 } finally {
     # Step 6: Cleanup local archive
