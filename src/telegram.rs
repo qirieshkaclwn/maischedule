@@ -105,6 +105,40 @@ impl TelegramBot {
         Ok(())
     }
 
+    pub async fn set_my_commands(&self) -> Result<()> {
+        let body = json!({
+            "commands": [
+                { "command": "start", "description": "Главное меню и статус подключения" },
+                { "command": "group", "description": "Выбрать или сменить учебную группу" },
+                { "command": "today", "description": "Расписание занятий на сегодня" },
+                { "command": "tomorrow", "description": "Расписание занятий на завтра" },
+                { "command": "week", "description": "Расписание на текущую неделю" },
+                { "command": "link", "description": "Ссылки для календаря iOS и Webcal" },
+                { "command": "notifications", "description": "Включить/выключить уведомления" },
+                { "command": "changes", "description": "История последних изменений" },
+                { "command": "check", "description": "Проверить обновления прямо сейчас" },
+                { "command": "help", "description": "Справка по всем командам" }
+            ]
+        });
+
+        let resp = self
+            .client
+            .post(self.api_url("setMyCommands"))
+            .json(&body)
+            .send()
+            .await
+            .context("Ошибка вызова setMyCommands")?;
+
+        let res: TelegramResponse<bool> = resp.json().await?;
+        if !res.ok {
+            warn!("Telegram API error in setMyCommands: {:?}", res.description);
+        } else {
+            info!("Список команд бота успешно зарегистрирован в Telegram.");
+        }
+        Ok(())
+    }
+
+
     #[allow(dead_code)]
     pub async fn edit_message_text(
         &self,
@@ -836,7 +870,11 @@ pub async fn run_polling(
     mut shutdown: watch::Receiver<bool>,
 ) {
     info!("Запуск поллинга Telegram-бота на Rust...");
+    if let Err(e) = bot.set_my_commands().await {
+        warn!("Не удалось автоматически зарегистрировать команды в Telegram API: {:?}", e);
+    }
     let mut offset = None;
+
     let ctx = BotContext {
         bot: &bot,
         db: &db,
