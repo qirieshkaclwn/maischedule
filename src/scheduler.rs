@@ -71,7 +71,7 @@ pub async fn run_scheduler(
 
         // 2. Фоновый парсинг и обновление расписаний для всех остальных групп института
         info!("Запуск фонового обновления расписаний для всех групп МАИ...");
-        sync_all_group_schedules(&db, &client, &active_groups, &shutdown).await;
+        sync_all_group_schedules(&db, &client, &active_groups, shutdown.clone()).await;
 
         tokio::select! {
             _ = shutdown.changed() => {
@@ -107,6 +107,7 @@ async fn check_single_group(
     bot: Option<&TelegramBot>,
     config: &Config,
 ) {
+    info!("Проверка расписания для группы: {}", group);
     match fetch_schedule(client, group).await {
         Ok(new_sched) => {
             match db.get_snapshot(group).await {
@@ -139,6 +140,7 @@ async fn check_single_group(
                     } else {
                         // Обновляем снимок, чтобы актуализировать дату
                         let _ = db.save_snapshot(&new_sched).await;
+                        info!("Расписание группы {} актуально (изменений нет).", group);
                     }
                 }
                 Ok(None) => {
@@ -160,7 +162,7 @@ async fn sync_all_group_schedules(
     db: &Database,
     client: &reqwest::Client,
     already_checked: &[String],
-    shutdown: &watch::Receiver<bool>,
+    mut shutdown: watch::Receiver<bool>,
 ) {
     let all_groups = match db.get_all_groups().await {
         Ok(g) => g,
@@ -186,34 +188,80 @@ async fn sync_all_group_schedules(
 
     // Семафор на 6 одновременных запросов, чтобы бережно опрашивать сервер МАИ
     let semaphore = Arc::new(Semaphore::new(6));
-    let mut updated_count = 0usize;
+    let mut join_set = tokio::task::JoinSet::new();
 
-    for group in to_check {
+    for (idx, group) in to_check.into_iter().enumerate() {
+        let current_num = idx + 1;
+
         if *shutdown.borrow() {
             info!("Остановка фонового парсинга расписаний по сигналу shutdown.");
+            join_set.abort_all();
             return;
         }
 
-        let permit = match semaphore.clone().acquire_owned().await {
-            Ok(p) => p,
-            Err(_) => break,
+        let permit = tokio::select! {
+            _ = shutdown.changed() => {
+                info!("Остановка фонового парсинга расписаний по сигналу shutdown.");
+                join_set.abort_all();
+                return;
+            }
+            p = semaphore.clone().acquire_owned() => {
+                match p {
+                    Ok(permit) => permit,
+                    Err(_) => break,
+                }
+            }
         };
+
+        info!("[{}/{}] Парсинг расписания группы: {}", current_num, total, group);
 
         let client = client.clone();
         let db = db.clone();
         let group_clone = group.clone();
 
-        tokio::spawn(async move {
+        join_set.spawn(async move {
             let _permit = permit;
-            if let Ok(sched) = fetch_schedule(&client, &group_clone).await {
-                let _ = db.save_snapshot(&sched).await;
+            match fetch_schedule(&client, &group_clone).await {
+                Ok(sched) => {
+                    let days_cnt = sched.days.len();
+                    if let Err(e) = db.save_snapshot(&sched).await {
+                        warn!("Ошибка сохранения снимка для группы {}: {:?}", group_clone, e);
+                    } else {
+                        info!("[{}/{}] Расписание сохранено для группы: {} (дней: {})", current_num, total, group_clone, days_cnt);
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("[{}/{}] Не удалось загрузить расписание для группы {}: {:?}", current_num, total, group_clone, e);
+                }
             }
         });
 
-        updated_count += 1;
         // Небольшая задержка между отправками запросов
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::select! {
+            _ = shutdown.changed() => {
+                info!("Остановка фонового парсинга расписаний по сигналу shutdown.");
+                join_set.abort_all();
+                return;
+            }
+            _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+        }
     }
 
-    info!("Запущен фоновый сбор расписаний для {} групп МАИ.", updated_count);
+    // Дожидаемся завершения оставшихся запущенных фоновых задач парсинга
+    while let Some(res) = tokio::select! {
+        _ = shutdown.changed() => {
+            info!("Остановка фонового парсинга расписаний по сигналу shutdown.");
+            join_set.abort_all();
+            return;
+        }
+        next = join_set.join_next() => next,
+    } {
+        if let Err(e) = res {
+            if !e.is_cancelled() {
+                warn!("Фоновая задача парсинга завершилась с ошибкой: {:?}", e);
+            }
+        }
+    }
+
+    info!("Фоновый парсинг расписаний успешно завершен для всех {} групп МАИ.", total);
 }
