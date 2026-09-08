@@ -1,0 +1,55 @@
+# HTTP: перенаправление на HTTPS и валидация Let's Encrypt ACME Challenge
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN} example.com www.example.com;
+
+    # Директория для проверки владения доменом через Let's Encrypt
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # Перенаправление всех остальных HTTP запросов на безопасный HTTPS
+    location / {
+        return 301 https://${DOMAIN}$request_uri;
+    }
+}
+
+# HTTPS: Проксирование запросов к приложению maischedule
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name ${DOMAIN};
+
+    # Пути к сертификатам Let's Encrypt
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+
+    # Современные протоколы и шифры безопасности SSL/TLS
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    # Максимальный размер тела запроса
+    client_max_body_size 16M;
+
+    # Проксирование на Rust сервис
+    location / {
+        proxy_pass http://maischedule:8000;
+        proxy_http_version 1.1;
+
+        # Передача реальных заголовков клиента
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+
+        # Таймауты для стабильного соединения
+        proxy_connect_timeout 60s;
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+    }
+}

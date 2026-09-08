@@ -28,8 +28,8 @@ Write-Host "Project root: $ProjectRoot"
 $remoteTarget = "$User@$ServerHost"
 
 # Step 1: Create remote directory
-Write-Host "[1/6] Preparing remote directory and data storage..."
-ssh $remoteTarget "mkdir -p $RemoteDir/data $RemoteDir/backups && chmod 777 $RemoteDir/data"
+Write-Host "[1/6] Preparing remote directories and data storage..."
+ssh $remoteTarget "mkdir -p $RemoteDir/data $RemoteDir/backups $RemoteDir/nginx/conf.d $RemoteDir/data/certbot/conf $RemoteDir/data/certbot/www $RemoteDir/data/certbot/logs && chmod 777 $RemoteDir/data"
 
 # Step 2: Build Docker image
 Write-Host "[2/6] Building Docker image (linux/amd64)..."
@@ -46,11 +46,16 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 try {
-    # Step 4: Copy archive and compose file with SSH on-the-fly compression
-    Write-Host "[4/6] Copying docker-compose.yml and image to server (compressed transfer)..."
-    scp -C maischedule.tar docker-compose.yml "$($remoteTarget):$($RemoteDir)/"
+    # Step 4: Copy archive, compose file, server deploy script and nginx directory
+    Write-Host "[4/6] Copying deployment files to server..."
+    scp -C maischedule.tar docker-compose.yml scripts/server_deploy.sh "$($remoteTarget):$($RemoteDir)/"
     if ($LASTEXITCODE -ne 0) {
         throw "File upload failed"
+    }
+
+    scp -r -C nginx "$($remoteTarget):$($RemoteDir)/"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Nginx directory upload failed"
     }
 
     # Check remote .env
@@ -68,11 +73,9 @@ try {
         Write-Host "Remote .env already exists. Preserving remote configuration."
     }
 
-    # Step 5: Backup DB, load image and start container
-    Write-Host "[5/6] Backing up database, loading image and starting container on server..."
-    $backupTime = Get-Date -Format "yyyyMMdd_HHmmss"
-    $deployCmd = "cd $RemoteDir && if [ -f data/maischedule.db ]; then cp data/maischedule.db backups/maischedule_$backupTime.db && (ls -t backups/*.db 2>/dev/null | tail -n +6 | xargs -r rm -f --); fi && docker load -i maischedule.tar && docker compose up -d && rm -f maischedule.tar maischedule.tar.gz && docker image prune -f"
-    ssh $remoteTarget $deployCmd
+    # Step 5: Execute server deployment script (SSL certbot check, DB backup, service launch)
+    Write-Host "[5/6] Executing server deployment (SSL Let's Encrypt check/issue, backup, service launch)..."
+    ssh $remoteTarget "chmod +x $RemoteDir/server_deploy.sh && $RemoteDir/server_deploy.sh $RemoteDir"
     if ($LASTEXITCODE -ne 0) {
         throw "Remote deployment commands failed"
     }

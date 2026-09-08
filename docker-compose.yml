@@ -7,7 +7,7 @@ services:
     container_name: maischedule
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/app/data
     env_file:
@@ -15,7 +15,6 @@ services:
 
     # Даем время сервису корректно сбросить SQLite WAL на диск при перезапуске
     stop_grace_period: 20s
-
 
     # На Rust сервис потребляет всего ~5–10 МБ RAM!
     # Лимит 32 МБ гарантирует, что контейнер никогда не превысит допустимый порог памяти.
@@ -32,3 +31,25 @@ services:
       options:
         max-size: "5m"
         max-file: "2"
+
+  nginx:
+    image: nginx:alpine
+    container_name: maischedule-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./data/certbot/conf:/etc/letsencrypt:ro
+      - ./data/certbot/www:/var/www/certbot:ro
+    depends_on:
+      - maischedule
+    mem_limit: 32m
+    cpus: 0.5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
