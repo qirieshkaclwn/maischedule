@@ -14,6 +14,28 @@ pub struct GroupInfo {
     pub course: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct User {
+    pub id: i64,
+    pub group_name: Option<String>,
+    pub username: Option<String>,
+    pub first_name: Option<String>,
+    pub notifications_enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangeRecord {
+    pub id: i64,
+    pub group_name: String,
+    pub change_type: String,
+    pub description: String,
+    pub created_at: String,
+}
+
+
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Lesson {
     pub subject: String,

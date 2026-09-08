@@ -28,8 +28,8 @@ Write-Host "Project root: $ProjectRoot"
 $remoteTarget = "$User@$ServerHost"
 
 # Step 1: Create remote directory
-Write-Host "[1/6] Preparing remote directory..."
-ssh $remoteTarget "mkdir -p $RemoteDir"
+Write-Host "[1/6] Preparing remote directory and data storage..."
+ssh $remoteTarget "mkdir -p $RemoteDir/data $RemoteDir/backups && chmod 777 $RemoteDir/data"
 
 # Step 2: Build Docker image
 Write-Host "[2/6] Building Docker image (linux/amd64)..."
@@ -68,13 +68,14 @@ try {
         Write-Host "Remote .env already exists. Preserving remote configuration."
     }
 
-    # Step 5: Load image and start container
-    Write-Host "[5/6] Loading image and starting container on server..."
-    $deployCmd = "cd $RemoteDir && docker load -i maischedule.tar && docker compose up -d && rm -f maischedule.tar maischedule.tar.gz && docker image prune -f"
+    # Step 5: Backup DB, load image and start container
+    Write-Host "[5/6] Backing up database, loading image and starting container on server..."
+    $deployCmd = "cd $RemoteDir && if [ -f data/maischedule.db ]; then cp data/maischedule.db backups/maischedule_\$(date +%Y%m%d_%H%M%S).db && (ls -t backups/*.db 2>/dev/null | tail -n +6 | xargs -r rm -f --); fi && docker load -i maischedule.tar && docker compose up -d && rm -f maischedule.tar maischedule.tar.gz && docker image prune -f"
     ssh $remoteTarget $deployCmd
     if ($LASTEXITCODE -ne 0) {
         throw "Remote deployment commands failed"
     }
+
 } finally {
     # Step 6: Cleanup local archive
     Write-Host "[6/6] Cleaning up local archive..."

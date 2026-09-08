@@ -13,7 +13,7 @@ fi
 echo "--- Запуск деплоя на ${USER}@${SERVER_HOST} (${REMOTE_DIR}) ---"
 
 echo "1. Подготовка рабочей директории на сервере..."
-ssh "${USER}@${SERVER_HOST}" "mkdir -p ${REMOTE_DIR}"
+ssh "${USER}@${SERVER_HOST}" "mkdir -p ${REMOTE_DIR}/data ${REMOTE_DIR}/backups && chmod 777 ${REMOTE_DIR}/data"
 
 echo "2. Сборка Docker-образа под архитектуру linux/amd64..."
 docker build --platform linux/amd64 -t maischedule:latest .
@@ -33,8 +33,17 @@ else
     echo "Файл .env уже существует на сервере и сохранен без изменений."
 fi
 
-echo "5. Загрузка образа и перезапуск сервиса на сервере..."
-ssh "${USER}@${SERVER_HOST}" "cd ${REMOTE_DIR} && docker load -i maischedule.tar && docker compose up -d && rm -f maischedule.tar maischedule.tar.gz && docker image prune -f"
+echo "5. Резервное копирование БД, загрузка образа и перезапуск сервиса..."
+ssh "${USER}@${SERVER_HOST}" "cd ${REMOTE_DIR} && \
+    if [ -f data/maischedule.db ]; then \
+        cp data/maischedule.db backups/maischedule_\$(date +%Y%m%d_%H%M%S).db && \
+        (ls -t backups/*.db 2>/dev/null | tail -n +6 | xargs -r rm -f --); \
+    fi && \
+    docker load -i maischedule.tar && \
+    docker compose up -d && \
+    rm -f maischedule.tar maischedule.tar.gz && \
+    docker image prune -f"
+
 
 echo "6. Очистка локального временного архива..."
 rm -f maischedule.tar maischedule.tar.gz

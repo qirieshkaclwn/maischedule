@@ -39,9 +39,13 @@ COPY --from=builder /app/target/release/maischedule /usr/local/bin/maischedule
 
 # Создаем непривилегированного пользователя и каталог для SQLite базы данных
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup && \
-    mkdir -p /app/data && chown -R appuser:appgroup /app
+    mkdir -p /app/data && chmod 777 /app/data && chown -R appuser:appgroup /app
+
+# Объявляем каталог базы данных томом для сохранения данных между перезапусками
+VOLUME ["/app/data"]
 
 USER appuser
+
 
 EXPOSE 8000
 

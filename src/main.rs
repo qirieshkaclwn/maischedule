@@ -108,9 +108,17 @@ async fn main() -> Result<()> {
     let _ = shutdown_tx.send(true);
     let _ = tokio::join!(server_handle, scheduler_handle);
 
+    info!("Фиксация данных SQLite (WAL checkpoint)...");
+    if let Err(e) = db.checkpoint().await {
+        tracing::error!("Ошибка при выполнении checkpoint БД: {:?}", e);
+    } else {
+        info!("База данных успешно синхронизирована на диск.");
+    }
+
     info!("Все сервисы успешно остановлены.");
     Ok(())
 }
+
 
 async fn wait_for_shutdown_signal() {
     let ctrl_c = async {
