@@ -1,0 +1,30 @@
+services:
+  maischedule:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: maischedule:latest
+    container_name: maischedule
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+
+    # На Rust сервис потребляет всего ~5–10 МБ RAM!
+    # Лимит 32 МБ гарантирует, что контейнер никогда не превысит допустимый порог памяти.
+    mem_limit: 32m
+    mem_reservation: 16m
+    cpus: 0.5
+    pids_limit: 30
+
+    tmpfs:
+      - /tmp:size=8M
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
