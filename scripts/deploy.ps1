@@ -8,7 +8,8 @@ param (
     [Parameter(Position=2)]
     [string]$RemoteDir = "~/maischedule",
 
-    [switch]$ForceEnv
+    [switch]$ForceEnv,
+    [switch]$KeepRemoteEnv
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,18 +60,30 @@ try {
     }
 
     # Check remote .env
-    Write-Host "Checking .env on server..."
-    $checkEnvCmd = "test -f $RemoteDir/.env && echo exists || echo missing"
-    $envStatus = ssh $remoteTarget $checkEnvCmd
-    if ($envStatus -notmatch "exists" -or $ForceEnv) {
-        if (Test-Path ".env") {
-            Write-Host "Uploading local .env to server..."
+    Write-Host "Checking .env configuration..."
+    if (Test-Path ".env") {
+        $checkEnvCmd = "if [ -f $RemoteDir/.env ]; then sha256sum $RemoteDir/.env | cut -d ' ' -f 1; else echo missing; fi"
+        $remoteHash = (ssh $remoteTarget $checkEnvCmd).Trim()
+
+        if ($remoteHash -eq "missing") {
+            Write-Host "Remote .env does not exist. Uploading local .env to server..."
             scp .env "$($remoteTarget):$($RemoteDir)/.env"
         } else {
-            Write-Host "Notice: local .env not found. Please configure .env on the server."
+            $localHash = (Get-FileHash ".env" -Algorithm SHA256).Hash.ToLower()
+            if ($KeepRemoteEnv) {
+                Write-Host "Flag -KeepRemoteEnv specified. Preserving remote configuration."
+            } elseif ($ForceEnv -or ($localHash -ne $remoteHash)) {
+                Write-Host "Local .env has changed. Creating remote backup and uploading updated .env..."
+                $backupTime = Get-Date -Format "yyyyMMdd_HHmmss"
+                ssh $remoteTarget "cp $RemoteDir/.env $RemoteDir/backups/.env_$backupTime.bak"
+                scp .env "$($remoteTarget):$($RemoteDir)/.env"
+                Write-Host "Updated .env uploaded successfully."
+            } else {
+                Write-Host "Remote .env is already up-to-date with local .env."
+            }
         }
     } else {
-        Write-Host "Remote .env already exists. Preserving remote configuration."
+        Write-Host "Notice: local .env not found. Please configure .env on the server."
     }
 
     # Step 5: Execute server deployment script (SSL certbot check, DB backup, service launch)
