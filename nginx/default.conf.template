@@ -35,6 +35,27 @@ server {
     # Максимальный размер тела запроса
     client_max_body_size 16M;
 
+    # Gzip сжатие для быстродействия календарей и страниц
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css text/xml text/calendar application/json application/javascript application/xml+rss;
+
+    # Игнорирование запросов favicon без записи в лог ошибок
+    location = /favicon.ico {
+        log_not_found off;
+        access_log off;
+        return 204;
+    }
+
+    # Запрет доступа к скрытым файлам (.env, .git и т.д.)
+    location ~ /\. {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+
     # Проксирование на Rust сервис
     location / {
         proxy_pass http://maischedule:8000;
@@ -46,6 +67,12 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Forwarded-Host $host;
+
+        # Оптимизация буферов для больших файлов календаря (.ics)
+        proxy_buffering on;
+        proxy_buffer_size 128k;
+        proxy_buffers 4 256k;
+        proxy_busy_buffers_size 256k;
 
         # Таймауты для стабильного соединения
         proxy_connect_timeout 60s;

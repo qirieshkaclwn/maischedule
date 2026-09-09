@@ -19,42 +19,68 @@ pub fn get_group_hash(group_name: &str) -> String {
 
 #[allow(dead_code)]
 pub async fn fetch_groups(client: &reqwest::Client) -> Result<Vec<GroupInfo>> {
-    let resp = client
-        .get(GROUPS_URL)
-        .header(reqwest::header::USER_AGENT, USER_AGENT)
-        .send()
-        .await
-        .context("Ошибка выполнения запроса к списку групп")?;
-
-    let groups: Vec<GroupInfo> = resp
-        .json()
-        .await
-        .context("Ошибка десериализации списка групп")?;
-    Ok(groups)
+    let mut last_err = None;
+    for attempt in 1..=3 {
+        match client
+            .get(GROUPS_URL)
+            .header(reqwest::header::USER_AGENT, USER_AGENT)
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                match resp.json::<Vec<GroupInfo>>().await {
+                    Ok(groups) => return Ok(groups),
+                    Err(e) => {
+                        last_err = Some(anyhow::anyhow!("Ошибка десериализации списка групп: {}", e));
+                    }
+                }
+            }
+            Err(e) => {
+                last_err = Some(anyhow::anyhow!("Ошибка выполнения запроса к списку групп: {}", e));
+            }
+        }
+        if attempt < 3 {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("Не удалось загрузить список групп МАИ")))
 }
 
 pub async fn fetch_schedule(client: &reqwest::Client, group_name: &str) -> Result<GroupSchedule> {
     let hash = get_group_hash(group_name);
     let url = SCHEDULE_URL_TEMPLATE.replace("{md5}", &hash);
 
-    let resp = client
-        .get(&url)
-        .header(reqwest::header::USER_AGENT, USER_AGENT)
-        .send()
-        .await
-        .with_context(|| format!("Ошибка запроса расписания по URL: {}", url))?;
+    let mut last_err = None;
+    for attempt in 1..=2 {
+        match client
+            .get(&url)
+            .header(reqwest::header::USER_AGENT, USER_AGENT)
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                let status = resp.status();
+                if !status.is_success() {
+                    anyhow::bail!("API МАИ вернуло HTTP статус {} для группы {}", status, group_name);
+                }
 
-    let status = resp.status();
-    if !status.is_success() {
-        anyhow::bail!("API МАИ вернуло HTTP статус {} для группы {}", status, group_name);
+                let json_val: Value = resp
+                    .json()
+                    .await
+                    .context("Ошибка парсинга JSON расписания")?;
+
+                return parse_schedule_json(json_val, group_name);
+            }
+            Err(e) => {
+                last_err = Some(anyhow::anyhow!("Ошибка запроса расписания по URL {}: {}", url, e));
+            }
+        }
+        if attempt < 2 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
     }
 
-    let json_val: Value = resp
-        .json()
-        .await
-        .context("Ошибка парсинга JSON расписания")?;
-
-    parse_schedule_json(json_val, group_name)
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("Не удалось загрузить расписание для группы {}", group_name)))
 }
 
 pub fn parse_schedule_json(raw: Value, fallback_group: &str) -> Result<GroupSchedule> {

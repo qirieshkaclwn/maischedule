@@ -46,8 +46,9 @@ async fn main() -> Result<()> {
     // Инициализация SQLite
     let db = Database::new(&config.db_path)?;
 
-    // Общий HTTP клиент с пулом соединений (таймаут 60с для поддержки long-polling Telegram)
+    // Общий HTTP клиент с пулом соединений (connect_timeout 10с, таймаут 60с для long-polling)
     let http_client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(60))
         .build()?;
 
