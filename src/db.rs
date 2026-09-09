@@ -79,6 +79,11 @@ impl Database {
                 created_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS app_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_users_group ON users(group_name);
             CREATE INDEX IF NOT EXISTS idx_mai_groups_lower ON mai_groups(name_lower);
             CREATE INDEX IF NOT EXISTS idx_mai_groups_course ON mai_groups(course);
@@ -557,6 +562,54 @@ impl Database {
         Ok(list)
     }
 
+    // --- Системные метаданные приложения ---
+
+    pub async fn get_metadata(&self, key: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare("SELECT value FROM app_metadata WHERE key = ?1")?;
+        let mut rows = stmt.query([key])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn set_metadata(&self, key: &str, value: &str) -> Result<()> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO app_metadata (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    pub async fn get_last_all_groups_sync(&self) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+        if let Some(val) = self.get_metadata("last_all_groups_sync").await? {
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&val) {
+                return Ok(Some(dt.with_timezone(&chrono::Utc)));
+            }
+        }
+
+        // Fallback: проверяем самую свежую дату в schedule_snapshots, если метаданные еще не записаны
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare("SELECT max(updated_at) FROM schedule_snapshots")?;
+        let mut rows = stmt.query([])?;
+        if let Some(row) = rows.next()? {
+            let max_dt: Option<String> = row.get(0)?;
+            if let Some(dt_str) = max_dt {
+                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&dt_str) {
+                    return Ok(Some(dt.with_timezone(&chrono::Utc)));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    pub async fn set_last_all_groups_sync(&self, dt: chrono::DateTime<chrono::Utc>) -> Result<()> {
+        self.set_metadata("last_all_groups_sync", &dt.to_rfc3339()).await
+    }
+
     pub async fn checkpoint(&self) -> Result<()> {
         let conn = self.conn.lock().await;
         conn.execute_batch(
@@ -740,6 +793,21 @@ mod tests {
         assert!(file_content.contains("ЛОГ ОБНОВЛЕНИЙ РАСПИСАНИЯ МАИ"));
         assert!(file_content.contains("М14О-101БВ-26"));
         assert!(file_content.contains("RoomChanged"));
+    }
+
+    #[tokio::test]
+    async fn test_db_metadata() {
+        let db = Database::new(":memory:").expect("Failed to create in-memory db");
+        assert!(db.get_metadata("test_key").await.unwrap().is_none());
+        assert!(db.get_last_all_groups_sync().await.unwrap().is_none());
+
+        db.set_metadata("test_key", "test_val").await.unwrap();
+        assert_eq!(db.get_metadata("test_key").await.unwrap().as_deref(), Some("test_val"));
+
+        let now = Utc::now();
+        db.set_last_all_groups_sync(now).await.unwrap();
+        let loaded = db.get_last_all_groups_sync().await.unwrap().expect("Should have sync time");
+        assert_eq!(loaded.timestamp(), now.timestamp());
     }
 }
 

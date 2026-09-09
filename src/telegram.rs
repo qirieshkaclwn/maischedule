@@ -979,6 +979,7 @@ mod tests {
             port: 8000,
             base_url: "https://example.com/".to_string(),
             check_interval_minutes: 30,
+            all_groups_sync_hours: 12,
             db_path: "data/db.sqlite".to_string(),
             timezone: "Europe/Moscow".to_string(),
             alert_minutes_before: 15,

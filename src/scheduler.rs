@@ -69,9 +69,40 @@ pub async fn run_scheduler(
             check_single_group(group, &db, &client, bot.as_ref(), &config).await;
         }
 
-        // 2. Фоновый парсинг и обновление расписаний для всех остальных групп института
-        info!("Запуск фонового обновления расписаний для всех групп МАИ...");
-        sync_all_group_schedules(&db, &client, &active_groups, shutdown.clone()).await;
+        // 2. Фоновый парсинг и обновление расписаний для всех остальных групп (не из списка активных)
+        // Выполняется 2 раза в день (интервал: config.all_groups_sync_hours ч, по умолчанию 12 ч)
+        let sync_interval_secs = (config.all_groups_sync_hours * 3600) as i64;
+        let should_sync_all = match db.get_last_all_groups_sync().await {
+            Ok(Some(last_sync)) => {
+                let elapsed = chrono::Utc::now().signed_duration_since(last_sync);
+                let needed = elapsed.num_seconds() >= sync_interval_secs;
+                if !needed {
+                    let next_in_hours = (sync_interval_secs - elapsed.num_seconds()).max(0) as f64 / 3600.0;
+                    info!(
+                        "Фоновый парсинг остальных групп МАИ пропущен (2 раза в день). Следующий запуск примерно через {:.1} ч.",
+                        next_in_hours
+                    );
+                }
+                needed
+            }
+            Ok(None) => true,
+            Err(e) => {
+                warn!("Ошибка проверки времени последней синхронизации групп: {:?}", e);
+                true
+            }
+        };
+
+        if should_sync_all {
+            info!(
+                "Запуск фонового обновления расписаний для остальных групп МАИ (2 раза в день, интервал {} ч)...",
+                config.all_groups_sync_hours
+            );
+            if sync_all_group_schedules(&db, &client, &active_groups, shutdown.clone()).await {
+                if let Err(e) = db.set_last_all_groups_sync(chrono::Utc::now()).await {
+                    error!("Ошибка сохранения времени синхронизации групп: {:?}", e);
+                }
+            }
+        }
 
         tokio::select! {
             _ = shutdown.changed() => {
@@ -163,12 +194,12 @@ async fn sync_all_group_schedules(
     client: &reqwest::Client,
     already_checked: &[String],
     mut shutdown: watch::Receiver<bool>,
-) {
+) -> bool {
     let all_groups = match db.get_all_groups().await {
         Ok(g) => g,
         Err(e) => {
             error!("Ошибка получения списка групп из БД для фонового парсинга: {:?}", e);
-            return;
+            return false;
         }
     };
 
@@ -181,7 +212,7 @@ async fn sync_all_group_schedules(
 
     let total = to_check.len();
     if total == 0 {
-        return;
+        return true;
     }
 
     info!("Фоновый парсинг расписаний для {} групп...", total);
@@ -196,14 +227,14 @@ async fn sync_all_group_schedules(
         if *shutdown.borrow() {
             info!("Остановка фонового парсинга расписаний по сигналу shutdown.");
             join_set.abort_all();
-            return;
+            return false;
         }
 
         let permit = tokio::select! {
             _ = shutdown.changed() => {
                 info!("Остановка фонового парсинга расписаний по сигналу shutdown.");
                 join_set.abort_all();
-                return;
+                return false;
             }
             p = semaphore.clone().acquire_owned() => {
                 match p {
@@ -241,7 +272,7 @@ async fn sync_all_group_schedules(
             _ = shutdown.changed() => {
                 info!("Остановка фонового парсинга расписаний по сигналу shutdown.");
                 join_set.abort_all();
-                return;
+                return false;
             }
             _ = tokio::time::sleep(Duration::from_millis(50)) => {}
         }
@@ -252,7 +283,7 @@ async fn sync_all_group_schedules(
         _ = shutdown.changed() => {
             info!("Остановка фонового парсинга расписаний по сигналу shutdown.");
             join_set.abort_all();
-            return;
+            return false;
         }
         next = join_set.join_next() => next,
     } {
@@ -264,4 +295,5 @@ async fn sync_all_group_schedules(
     }
 
     info!("Фоновый парсинг расписаний успешно завершен для всех {} групп МАИ.", total);
+    true
 }

@@ -9,6 +9,7 @@ pub struct Config {
     pub port: u16,
     pub base_url: String,
     pub check_interval_minutes: u64,
+    pub all_groups_sync_hours: u64,
     pub db_path: String,
     pub timezone: String,
     pub alert_minutes_before: u32,
@@ -36,6 +37,10 @@ impl Config {
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(30);
+        let all_groups_sync_hours = env::var("ALL_GROUPS_SYNC_HOURS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(12);
         let db_path = env::var("DB_PATH")
             .unwrap_or_else(|_| "data/maischedule.db".to_string());
         let timezone = env::var("TIMEZONE")
@@ -53,6 +58,7 @@ impl Config {
             port,
             base_url,
             check_interval_minutes,
+            all_groups_sync_hours,
             db_path,
             timezone,
             alert_minutes_before,
