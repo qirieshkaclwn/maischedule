@@ -53,7 +53,7 @@ else
 fi
 
 echo "5. Выполнение развертывания на сервере (проверка SSL Let's Encrypt, бэкап, перезапуск)..."
-ssh "${USER}@${SERVER_HOST}" "chmod +x ${REMOTE_DIR}/server_deploy.sh && ${REMOTE_DIR}/server_deploy.sh ${REMOTE_DIR}"
+ssh "${USER}@${SERVER_HOST}" "sed -i 's/\r$//' ${REMOTE_DIR}/server_deploy.sh && chmod +x ${REMOTE_DIR}/server_deploy.sh && bash ${REMOTE_DIR}/server_deploy.sh '${REMOTE_DIR}'"
 
 
 echo "6. Очистка локального временного архива..."

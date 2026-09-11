@@ -88,9 +88,9 @@ try {
 
     # Step 5: Execute server deployment script (SSL certbot check, DB backup, service launch)
     Write-Host "[5/6] Executing server deployment (SSL Let's Encrypt check/issue, backup, service launch)..."
-    ssh $remoteTarget "chmod +x $RemoteDir/server_deploy.sh && $RemoteDir/server_deploy.sh $RemoteDir"
+    ssh $remoteTarget "sed -i 's/\r$//' $RemoteDir/server_deploy.sh && chmod +x $RemoteDir/server_deploy.sh && bash $RemoteDir/server_deploy.sh '$RemoteDir'"
     if ($LASTEXITCODE -ne 0) {
-        throw "Remote deployment commands failed"
+        throw "Remote deployment commands failed (exit code: $LASTEXITCODE)"
     }
 
 

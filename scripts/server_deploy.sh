@@ -2,7 +2,17 @@
 set -e
 
 REMOTE_DIR="${1:-$(pwd)}"
+REMOTE_DIR="${REMOTE_DIR/#\~/$HOME}"
 cd "$REMOTE_DIR"
+
+if docker compose version >/dev/null 2>&1; then
+    COMPOSE="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE="docker-compose"
+else
+    echo "Ошибка: docker compose / docker-compose не найден на сервере!" >&2
+    exit 1
+fi
 
 echo "=== Запуск развертывания на сервере ($REMOTE_DIR) ==="
 
@@ -44,7 +54,7 @@ fi
 # 4. Генерация конфигурации Nginx
 if [ -f nginx/default.conf.template ]; then
     echo "Генерация nginx/conf.d/default.conf для домена $DOMAIN..."
-    sed "s|\${DOMAIN}|${DOMAIN}|g" nginx/default.conf.template > nginx/conf.d/default.conf
+    sed "s|\${DOMAIN}|${DOMAIN}|g" nginx/default.conf.template | tr -d '\r' > nginx/conf.d/default.conf
 fi
 
 # 5. Проверка и выпуск SSL-сертификата Let's Encrypt
@@ -52,7 +62,7 @@ CERT_FILE="data/certbot/conf/live/${DOMAIN}/fullchain.pem"
 if [ ! -f "$CERT_FILE" ]; then
     echo "SSL-сертификат для $DOMAIN не найден. Запрос сертификата Let's Encrypt..."
     # Останавливаем nginx, чтобы освободить порт 80 для certbot standalone
-    docker compose stop nginx 2>/dev/null || true
+    $COMPOSE stop nginx 2>/dev/null || true
 
     EMAIL_ARG="--register-unsafely-without-email"
     if [ -n "$LETSENCRYPT_EMAIL" ]; then
@@ -104,15 +114,15 @@ if [ -f maischedule.tar ]; then
     rm -f maischedule.tar maischedule.tar.gz
 fi
 
-echo "Запуск сервисов через docker compose..."
-docker compose up -d --remove-orphans
+echo "Запуск сервисов через $COMPOSE..."
+$COMPOSE up -d --remove-orphans
 
 echo "Очистка устаревших образов..."
 docker image prune -f
 
 # 8. Настройка автоматического продления сертификатов раз в неделю через cron
 if command -v crontab >/dev/null 2>&1; then
-    RENEW_CMD="0 3 * * 1 cd $REMOTE_DIR && docker run --rm -v \$(pwd)/data/certbot/conf:/etc/letsencrypt -v \$(pwd)/data/certbot/www:/var/www/certbot certbot/certbot renew --webroot -w /var/www/certbot --quiet && docker compose restart nginx >/dev/null 2>&1"
+    RENEW_CMD="0 3 * * 1 cd $REMOTE_DIR && docker run --rm -v \$(pwd)/data/certbot/conf:/etc/letsencrypt -v \$(pwd)/data/certbot/www:/var/www/certbot certbot/certbot renew --webroot -w /var/www/certbot --quiet && $COMPOSE restart nginx >/dev/null 2>&1"
     (crontab -l 2>/dev/null | grep -v "certbot renew" || true; echo "$RENEW_CMD") | crontab - 2>/dev/null || true
 fi
 

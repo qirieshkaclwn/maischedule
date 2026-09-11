@@ -236,6 +236,18 @@ pub fn detect_diff(old_sched: &GroupSchedule, new_sched: &GroupSchedule) -> Vec<
     changes
 }
 
+/// Фильтрует изменения расписания, исключая прошедшие даты (оставляет сегодня и будущие).
+pub fn filter_current_and_future_changes(
+    changes: &[ScheduleChange],
+    reference_date: NaiveDate,
+) -> Vec<ScheduleChange> {
+    changes
+        .iter()
+        .filter(|c| c.date >= reference_date || c.old_date.is_some_and(|d| d >= reference_date))
+        .cloned()
+        .collect()
+}
+
 pub fn format_diff_message(group_name: &str, changes: &[ScheduleChange]) -> String {
     let safe_group = escape_html(group_name);
     if changes.is_empty() {
@@ -588,5 +600,59 @@ mod tests {
         let msg = format_diff_message("TEST <&>", &changes);
         assert!(msg.contains("TEST &lt;&amp;&gt;"));
         assert!(msg.contains("C++ &amp; Алгоритмы &lt;1&gt;"));
+    }
+
+    #[test]
+    fn test_filter_current_and_future_changes() {
+        let past_date = NaiveDate::from_ymd_opt(2026, 9, 7).unwrap();
+        let today = NaiveDate::from_ymd_opt(2026, 9, 11).unwrap();
+        let future_date = NaiveDate::from_ymd_opt(2026, 9, 14).unwrap();
+
+        let changes = vec![
+            ScheduleChange {
+                change_type: ChangeType::Cancelled,
+                subject: "Прошедшая пара".to_string(),
+                date: past_date,
+                day_name: "Пн".to_string(),
+                time_start: "14:45".to_string(),
+                time_end: "16:15".to_string(),
+                old_date: None,
+                old_time_start: None,
+                old_value: None,
+                new_value: None,
+                details: "cancelled".to_string(),
+            },
+            ScheduleChange {
+                change_type: ChangeType::Cancelled,
+                subject: "Будущая пара".to_string(),
+                date: future_date,
+                day_name: "Пн".to_string(),
+                time_start: "14:45".to_string(),
+                time_end: "16:15".to_string(),
+                old_date: None,
+                old_time_start: None,
+                old_value: None,
+                new_value: None,
+                details: "cancelled".to_string(),
+            },
+            ScheduleChange {
+                change_type: ChangeType::Moved,
+                subject: "Перенос из прошлого в будущее".to_string(),
+                date: future_date,
+                day_name: "Пн".to_string(),
+                time_start: "10:45".to_string(),
+                time_end: "12:15".to_string(),
+                old_date: Some(past_date),
+                old_time_start: Some("14:45".to_string()),
+                old_value: Some("07.09".to_string()),
+                new_value: Some("14.09".to_string()),
+                details: "moved".to_string(),
+            },
+        ];
+
+        let filtered = filter_current_and_future_changes(&changes, today);
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0].subject, "Будущая пара");
+        assert_eq!(filtered[1].subject, "Перенос из прошлого в будущее");
     }
 }

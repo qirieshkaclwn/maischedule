@@ -7,7 +7,7 @@ use tracing::{error, info, warn};
 use crate::api::{fetch_groups, fetch_schedule};
 use crate::config::Config;
 use crate::db::Database;
-use crate::diff::{detect_diff, format_diff_message};
+use crate::diff::{detect_diff, filter_current_and_future_changes, format_diff_message};
 use crate::telegram::TelegramBot;
 
 pub async fn run_scheduler(
@@ -154,22 +154,32 @@ async fn check_single_group(
                         let _ = db.save_snapshot(&new_sched).await;
 
                         if let Some(tg_bot) = bot {
-                            let msg_text = format_diff_message(group, &diff);
-                            let subs = db.get_subscribers_for_group(group).await.unwrap_or_default();
-                            let mut targets: HashSet<i64> = subs.into_iter().collect();
+                            let today = chrono::Local::now().date_naive();
+                            let upcoming_diff = filter_current_and_future_changes(&diff, today);
 
-                            // Если у группы нет явных подписчиков (например, это default_group до регистрации первого пользователя),
-                            // но настроен TELEGRAM_CHAT_ID, отправляем уведомление на него как дефолтному получателю.
-                            if targets.is_empty() && group == config.default_group.trim() {
-                                if let Some(chat_id) = config.telegram_chat_id {
-                                    targets.insert(chat_id);
-                                }
-                            }
+                            if !upcoming_diff.is_empty() {
+                                let msg_text = format_diff_message(group, &upcoming_diff);
+                                let subs = db.get_subscribers_for_group(group).await.unwrap_or_default();
+                                let mut targets: HashSet<i64> = subs.into_iter().collect();
 
-                            for chat_id in targets {
-                                if let Err(e) = tg_bot.send_message(chat_id, &msg_text, None).await {
-                                    error!("Ошибка отправки уведомления в чат {}: {:?}", chat_id, e);
+                                // Если у группы нет явных подписчиков (например, это default_group до регистрации первого пользователя),
+                                // но настроен TELEGRAM_CHAT_ID, отправляем уведомление на него как дефолтному получателю.
+                                if targets.is_empty() && group == config.default_group.trim() {
+                                    if let Some(chat_id) = config.telegram_chat_id {
+                                        targets.insert(chat_id);
+                                    }
                                 }
+
+                                for chat_id in targets {
+                                    if let Err(e) = tg_bot.send_message(chat_id, &msg_text, None).await {
+                                        error!("Ошибка отправки уведомления в чат {}: {:?}", chat_id, e);
+                                    }
+                                }
+                            } else {
+                                info!(
+                                    "Все зафиксированные изменения группы {} относятся к прошедшим датам, уведомление не требуется.",
+                                    group
+                                );
                             }
                         }
                     } else {

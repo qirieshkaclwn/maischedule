@@ -122,6 +122,7 @@ mod tests {
             "docker-compose.yml",
             ".env.example",
             ".gitignore",
+            ".gitattributes",
             "deploy.ps1",
             "scripts/deploy.ps1",
             "scripts/deploy.sh",

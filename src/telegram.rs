@@ -8,7 +8,7 @@ use tracing::{error, info, warn};
 use crate::api::fetch_schedule;
 use crate::config::Config;
 use crate::db::Database;
-use crate::diff::{detect_diff, format_diff_message};
+use crate::diff::{detect_diff, filter_current_and_future_changes, format_diff_message};
 use crate::models::{DaySchedule, GroupSchedule};
 use crate::utils::escape_html;
 
@@ -921,8 +921,22 @@ async fn handle_check(chat_id: i64, ctx: &BotContext<'_>) -> Result<()> {
                             .await;
                     }
                     let _ = ctx.db.save_snapshot(&new_sched).await;
-                    let msg = format_diff_message(&user_group, &diff);
-                    ctx.bot.send_message(chat_id, &msg, None).await
+
+                    let today = Local::now().date_naive();
+                    let upcoming_diff = filter_current_and_future_changes(&diff, today);
+
+                    if upcoming_diff.is_empty() {
+                        ctx.bot
+                            .send_message(
+                                chat_id,
+                                &format!("Расписание группы <b>{}</b> проверено — изменений в предстоящих занятиях нет (зафиксированные изменения касались только прошедших дат).", escape_html(&user_group)),
+                                None,
+                            )
+                            .await
+                    } else {
+                        let msg = format_diff_message(&user_group, &upcoming_diff);
+                        ctx.bot.send_message(chat_id, &msg, None).await
+                    }
                 }
             } else {
                 let _ = ctx.db.save_snapshot(&new_sched).await;
