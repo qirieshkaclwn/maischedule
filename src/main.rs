@@ -3,6 +3,7 @@ mod calendar;
 mod config;
 mod db;
 mod diff;
+mod miniapp;
 mod models;
 mod scheduler;
 mod server;

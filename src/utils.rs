@@ -137,6 +137,7 @@ mod tests {
             "src/models.rs",
             "src/scheduler.rs",
             "src/server.rs",
+            "src/miniapp.rs",
             "src/telegram.rs",
             "src/utils.rs",
         ];

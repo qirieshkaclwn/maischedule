@@ -108,10 +108,11 @@ impl TelegramBot {
     pub async fn set_my_commands(&self) -> Result<()> {
         let body = json!({
             "commands": [
+                { "command": "app", "description": "Открыть расписание в Telegram Mini App" },
                 { "command": "start", "description": "Главное меню и статус подключения" },
                 { "command": "group", "description": "Выбрать или сменить учебную группу" },
-                { "command": "today", "description": "Расписание занятий на сегодня" },
-                { "command": "tomorrow", "description": "Расписание занятий на завтра" },
+                { "command": "today", "description": "Расписание на сегодня" },
+                { "command": "tomorrow", "description": "Расписание на завтра" },
                 { "command": "week", "description": "Расписание на текущую неделю" },
                 { "command": "link", "description": "Ссылки для календаря iOS и Webcal" },
                 { "command": "notifications", "description": "Включить/выключить уведомления" },
@@ -134,6 +135,34 @@ impl TelegramBot {
             warn!("Telegram API error in setMyCommands: {:?}", res.description);
         } else {
             info!("Список команд бота успешно зарегистрирован в Telegram.");
+        }
+        Ok(())
+    }
+
+    pub async fn set_menu_button(&self, web_app_url: &str) -> Result<()> {
+        let body = json!({
+            "menu_button": {
+                "type": "web_app",
+                "text": "Расписание",
+                "web_app": {
+                    "url": web_app_url
+                }
+            }
+        });
+
+        let resp = self
+            .client
+            .post(self.api_url("setChatMenuButton"))
+            .json(&body)
+            .send()
+            .await
+            .context("Ошибка вызова setChatMenuButton")?;
+
+        let res: TelegramResponse<bool> = resp.json().await?;
+        if !res.ok {
+            warn!("Telegram API error in setChatMenuButton: {:?}", res.description);
+        } else {
+            info!("Кнопка меню Mini App успешно зарегистрирована в Telegram.");
         }
         Ok(())
     }
@@ -261,12 +290,23 @@ pub fn get_subscribe_url(config: &Config, group: &str) -> String {
     format!("{}/subscribe/{}", base, encoded)
 }
 
+pub fn get_app_url(config: &Config, group: Option<&str>) -> String {
+    let base = config.base_url.trim_end_matches('/');
+    match group {
+        Some(g) if !g.trim().is_empty() => {
+            format!("{}/app?group={}", base, crate::utils::url_encode(g))
+        }
+        _ => format!("{}/app", base),
+    }
+}
+
 pub fn is_admin(chat_id: i64, config: &Config) -> bool {
     config.telegram_chat_id == Some(chat_id)
 }
 
 pub fn main_keyboard(
     subscribe_url: &str,
+    app_url: &str,
     notifications_enabled: bool,
     is_admin: bool,
 ) -> serde_json::Value {
@@ -276,7 +316,20 @@ pub fn main_keyboard(
         "Уведомления: Выкл"
     };
 
+    let app_btn = if app_url.starts_with("https://") {
+        json!({
+            "text": "Открыть расписание (Mini App)",
+            "web_app": { "url": app_url }
+        })
+    } else {
+        json!({
+            "text": "Открыть расписание (Mini App)",
+            "url": app_url
+        })
+    };
+
     let mut inline_keyboard = vec![
+        vec![app_btn],
         vec![
             json!({ "text": "Сегодня", "callback_data": "btn_today" }),
             json!({ "text": "Завтра", "callback_data": "btn_tomorrow" }),
@@ -397,6 +450,7 @@ pub async fn handle_incoming_text(
     if trimmed.starts_with('/') {
         let (cmd, args) = parse_command(trimmed);
         match cmd {
+            "/app" => handle_app(chat_id, ctx).await,
             "/start" => handle_start(chat_id, username, first_name, ctx).await,
             "/help" => handle_help(chat_id, ctx).await,
             "/link" => handle_link(chat_id, ctx).await,
@@ -432,6 +486,7 @@ async fn handle_start(
     if let Some(user) = user_opt.filter(|u| u.group_name.is_some()) {
         let user_group = user.group_name.as_deref().unwrap();
         let subscribe_url = get_subscribe_url(ctx.config, user_group);
+        let app_url = get_app_url(ctx.config, Some(user_group));
         let text = format!(
             "Привет, {}!\n\n\
             Сервис автосинхронизации расписания МАИ с календарем iOS / macOS / Google и уведомлений об изменениях пар.\n\n\
@@ -445,7 +500,11 @@ async fn handle_start(
             escape_html(user_group)
         );
         ctx.bot
-            .send_message(chat_id, &text, Some(main_keyboard(&subscribe_url, user.notifications_enabled, is_adm)))
+            .send_message(
+                chat_id,
+                &text,
+                Some(main_keyboard(&subscribe_url, &app_url, user.notifications_enabled, is_adm)),
+            )
             .await
     } else {
         let text = format!(
@@ -461,6 +520,7 @@ async fn handle_start(
 
 async fn handle_help(chat_id: i64, ctx: &BotContext<'_>) -> Result<()> {
     let mut text = "<b>Доступные команды:</b>\n\n\
+        /app - Открыть интерактивное расписание (Mini App)\n\
         /start - Главное меню и статус подключения\n\
         /group &lt;название&gt; - Выбрать или сменить учебную группу\n\
         /today - Расписание на сегодня\n\
@@ -478,6 +538,39 @@ async fn handle_help(chat_id: i64, ctx: &BotContext<'_>) -> Result<()> {
     }
 
     ctx.bot.send_message(chat_id, &text, None).await
+}
+
+async fn handle_app(chat_id: i64, ctx: &BotContext<'_>) -> Result<()> {
+    let user_group = ctx
+        .db
+        .get_user_group(chat_id)
+        .await?
+        .unwrap_or_else(|| ctx.config.default_group.clone());
+    let app_url = get_app_url(ctx.config, Some(&user_group));
+    let text = format!(
+        "<b>Интерактивное расписание МАИ (Mini App)</b>\n\n\
+        Группа: <b>{}</b>\n\n\
+        Нажмите кнопку ниже, чтобы открыть расписание внутри Telegram:",
+        escape_html(&user_group)
+    );
+
+    let app_btn = if app_url.starts_with("https://") {
+        json!({
+            "text": "Открыть расписание (Mini App)",
+            "web_app": { "url": app_url }
+        })
+    } else {
+        json!({
+            "text": "Открыть расписание (Mini App)",
+            "url": app_url
+        })
+    };
+
+    let keyboard = json!({
+        "inline_keyboard": [[app_btn]]
+    });
+
+    ctx.bot.send_message(chat_id, &text, Some(keyboard)).await
 }
 
 
@@ -587,14 +680,24 @@ async fn apply_user_group(
     });
 
     let subscribe_url = get_subscribe_url(ctx.config, group_name);
+    let app_url = get_app_url(ctx.config, Some(group_name));
     let text = format!(
         "Группа успешно установлена: <b>{}</b>!\n\n\
-        Теперь вы можете добавить расписание в Apple Calendar / Google Calendar по кнопке ниже:",
+        Теперь вы можете открыть расписание в Telegram Mini App или добавить в Apple Calendar по кнопкам ниже:",
         escape_html(group_name)
     );
     let is_adm = is_admin(chat_id, ctx.config);
     ctx.bot
-        .send_message(chat_id, &text, Some(main_keyboard(&subscribe_url, user.notifications_enabled, is_adm)))
+        .send_message(
+            chat_id,
+            &text,
+            Some(main_keyboard(
+                &subscribe_url,
+                &app_url,
+                user.notifications_enabled,
+                is_adm,
+            )),
+        )
         .await
 }
 
@@ -747,7 +850,8 @@ async fn handle_toggle_notifications(chat_id: i64, ctx: &BotContext<'_>) -> Resu
     let is_adm = is_admin(chat_id, ctx.config);
     let reply_markup = user_group.as_deref().map(|grp| {
         let subscribe_url = get_subscribe_url(ctx.config, grp);
-        main_keyboard(&subscribe_url, is_enabled, is_adm)
+        let app_url = get_app_url(ctx.config, Some(grp));
+        main_keyboard(&subscribe_url, &app_url, is_enabled, is_adm)
     });
 
 
@@ -873,6 +977,12 @@ pub async fn run_polling(
     if let Err(e) = bot.set_my_commands().await {
         warn!("Не удалось автоматически зарегистрировать команды в Telegram API: {:?}", e);
     }
+    let app_url = get_app_url(&config, None);
+    if app_url.starts_with("https://") {
+        if let Err(e) = bot.set_menu_button(&app_url).await {
+            warn!("Не удалось зарегистрировать кнопку меню Mini App: {:?}", e);
+        }
+    }
     let mut offset = None;
 
     let ctx = BotContext {
@@ -921,6 +1031,7 @@ pub async fn run_polling(
                                             "btn_today" => handle_today(chat_id, &ctx).await,
                                             "btn_tomorrow" => handle_tomorrow(chat_id, &ctx).await,
                                             "btn_week" => handle_week(chat_id, &ctx).await,
+                                            "btn_app" => handle_app(chat_id, &ctx).await,
                                             "btn_link" => handle_link(chat_id, &ctx).await,
                                             "btn_check" => handle_check(chat_id, &ctx).await,
                                             "btn_toggle_notif" => handle_toggle_notifications(chat_id, &ctx).await,
@@ -1027,14 +1138,23 @@ mod tests {
 
     #[test]
     fn test_main_keyboard_admin() {
-        let kb_user = main_keyboard("https://example.com/sub", true, false);
+        let kb_user = main_keyboard("https://example.com/sub", "https://example.com/app", true, false);
         let s_user = serde_json::to_string(&kb_user).unwrap();
         assert!(!s_user.contains("btn_admin_log"));
+        assert!(s_user.contains("web_app"));
+        assert!(s_user.contains("Открыть расписание"));
 
-        let kb_admin = main_keyboard("https://example.com/sub", true, true);
+        let kb_admin = main_keyboard("https://example.com/sub", "https://example.com/app", true, true);
         let s_admin = serde_json::to_string(&kb_admin).unwrap();
         assert!(s_admin.contains("btn_admin_log"));
         assert!(s_admin.contains("Лог обновлений (файл)"));
+        assert!(s_admin.contains("web_app"));
+
+        // Fallback for non-https
+        let kb_http = main_keyboard("http://example.com/sub", "http://example.com/app", true, false);
+        let s_http = serde_json::to_string(&kb_http).unwrap();
+        assert!(!s_http.contains("web_app"));
+        assert!(s_http.contains("url"));
     }
 }
 
