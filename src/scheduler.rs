@@ -158,8 +158,12 @@ async fn check_single_group(
                             let subs = db.get_subscribers_for_group(group).await.unwrap_or_default();
                             let mut targets: HashSet<i64> = subs.into_iter().collect();
 
-                            if let Some(chat_id) = config.telegram_chat_id {
-                                targets.insert(chat_id);
+                            // Если у группы нет явных подписчиков (например, это default_group до регистрации первого пользователя),
+                            // но настроен TELEGRAM_CHAT_ID, отправляем уведомление на него как дефолтному получателю.
+                            if targets.is_empty() && group == config.default_group.trim() {
+                                if let Some(chat_id) = config.telegram_chat_id {
+                                    targets.insert(chat_id);
+                                }
                             }
 
                             for chat_id in targets {
