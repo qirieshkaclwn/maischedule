@@ -140,6 +140,8 @@ mod tests {
             "src/miniapp.rs",
             "src/telegram.rs",
             "src/utils.rs",
+            "templates/miniapp.html",
+            "templates/portal.html",
         ];
 
         for file_rel in &check_files {

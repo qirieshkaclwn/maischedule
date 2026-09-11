@@ -271,6 +271,8 @@ async fn toggle_user_notifications_handler(
     }
 }
 
+const PORTAL_TEMPLATE: &str = include_str!("../templates/portal.html");
+
 fn render_portal_html(config: &Config, initial_group: &str, groups: &[GroupInfo]) -> String {
     let base = config.base_url.trim_end_matches('/');
     let (webcal_link, https_link) = get_webcal_links(config, initial_group);
@@ -285,174 +287,12 @@ fn render_portal_html(config: &Config, initial_group: &str, groups: &[GroupInfo]
         ));
     }
 
-    format!(
-        r#"<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Подключение календаря МАИ</title>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background: #f2f2f7;
-            color: #1c1c1e;
-            margin: 0;
-            padding: 20px;
-            display: flex;
-            justify-content: center;
-        }}
-        .card {{
-            background: #ffffff;
-            max-width: 580px;
-            width: 100%;
-            border-radius: 18px;
-            padding: 28px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.06);
-        }}
-        h1 {{
-            font-size: 24px;
-            margin-top: 0;
-            color: #007aff;
-        }}
-        label {{
-            display: block;
-            font-size: 14px;
-            font-weight: 600;
-            margin-bottom: 6px;
-            color: #3a3a3c;
-        }}
-        .input-group {{
-            margin-bottom: 20px;
-        }}
-        input.text-input {{
-            width: 100%;
-            box-sizing: border-box;
-            padding: 12px 14px;
-            font-size: 16px;
-            border: 1px solid #d1d1d6;
-            border-radius: 10px;
-            outline: none;
-            transition: border-color 0.2s;
-        }}
-        input.text-input:focus {{
-            border-color: #007aff;
-        }}
-        .badge {{
-            display: inline-block;
-            background: #e5f1ff;
-            color: #007aff;
-            padding: 4px 10px;
-            border-radius: 8px;
-            font-weight: 600;
-            font-size: 14px;
-        }}
-        .button {{
-            display: block;
-            width: 100%;
-            box-sizing: border-box;
-            background: #007aff;
-            color: #ffffff;
-            text-align: center;
-            padding: 14px 20px;
-            border-radius: 12px;
-            text-decoration: none;
-            font-size: 16px;
-            font-weight: 600;
-            margin: 18px 0;
-            transition: background 0.2s;
-        }}
-        .button:hover {{
-            background: #0056b3;
-        }}
-        .instructions {{
-            background: #f8f9fa;
-            border-radius: 12px;
-            padding: 16px;
-            font-size: 14px;
-            line-height: 1.5;
-        }}
-        .instructions ol {{
-            margin: 0;
-            padding-left: 20px;
-        }}
-        .link-box {{
-            background: #e9ecef;
-            padding: 10px 12px;
-            border-radius: 8px;
-            font-family: monospace;
-            font-size: 13px;
-            word-break: break-all;
-            margin-top: 8px;
-            user-select: all;
-        }}
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h1>Расписание МАИ (Календарь)</h1>
-        <p>Автоматическая синхронизация расписания занятий любой группы МАИ с Apple Calendar на iPhone, iPad и Mac, а также с Google Calendar.</p>
-
-        <div class="input-group">
-            <label for="group-input">Выберите или введите вашу учебную группу:</label>
-            <input
-                id="group-input"
-                class="text-input"
-                list="groups-list"
-                value="{current_group}"
-                placeholder="Например: М14О-101БВ-26"
-                autocomplete="off"
-                onchange="updateGroup()"
-                oninput="updateGroup()"
-            >
-            <datalist id="groups-list">
-                {options_html}
-            </datalist>
-        </div>
-
-        <p>Выбранная группа: <span id="group-badge" class="badge">{current_group}</span></p>
-
-        <a id="webcal-btn" href="{webcal_link}" class="button">Добавить в Календарь на iPhone</a>
-
-        <div class="instructions">
-            <b>Как добавить календарь вручную (iPhone / Mac / Google Calendar):</b>
-            <ol>
-                <li>На iPhone откройте <b>«Настройки»</b> -&gt; <b>«Календарь»</b> -&gt; <b>«Учетные записи»</b>.</li>
-                <li>Нажмите <b>«Добавить учетную запись»</b> -&gt; <b>«Другое»</b> -&gt; <b>«Подписной календарь»</b>.</li>
-                <li>Вставьте прямую ссылку на расписание вашей группы:
-                    <div id="link-box" class="link-box">{https_link}</div>
-                </li>
-                <li>В параметрах установите <b>«Автообновление»</b>: <i>Каждые 15 минут</i>.</li>
-            </ol>
-        </div>
-    </div>
-
-    <script>
-        const baseUrl = "{base_url}";
-
-        function updateGroup() {{
-            const input = document.getElementById("group-input");
-            const val = input.value.trim();
-            if (!val) return;
-
-            document.getElementById("group-badge").textContent = val;
-
-            const encoded = encodeURIComponent(val);
-            const httpsUrl = baseUrl + "/calendar/" + encoded + ".ics";
-            const webcalUrl = httpsUrl.replace(/^https?:\/\//, "webcal://");
-
-            document.getElementById("webcal-btn").href = webcalUrl;
-            document.getElementById("link-box").textContent = httpsUrl;
-        }}
-    </script>
-</body>
-</html>"#,
-        base_url = base,
-        current_group = escape_html(initial_group),
-        options_html = options_html,
-        webcal_link = webcal_link,
-        https_link = https_link
-    )
+    PORTAL_TEMPLATE
+        .replace("__BASE_URL__", base)
+        .replace("__CURRENT_GROUP__", &escape_html(initial_group))
+        .replace("__OPTIONS_HTML__", &options_html)
+        .replace("__WEBCAL_LINK__", &webcal_link)
+        .replace("__HTTPS_LINK__", &https_link)
 }
 
 #[cfg(test)]
