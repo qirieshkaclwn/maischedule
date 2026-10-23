@@ -16,9 +16,10 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs && \
     cargo build --release && \
     rm -rf src
 
-# Копируем реальный исходный код и шаблоны
+# Копируем реальный исходный код, статику и шаблоны
 COPY src/ ./src/
 COPY templates/ ./templates/
+COPY static/ ./static/
 
 # Обновляем timestamp исходников, чтобы cargo пересобрал бинарник
 RUN touch src/main.rs && cargo build --release

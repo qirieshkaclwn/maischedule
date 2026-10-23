@@ -148,6 +148,7 @@ mod tests {
             "src/utils.rs",
             "templates/miniapp.html",
             "templates/portal.html",
+            "static/telegram-web-app.js",
         ];
 
         for file_rel in &check_files {

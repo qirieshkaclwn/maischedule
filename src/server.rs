@@ -45,9 +45,27 @@ pub fn create_router(state: AppState) -> Router {
         .route("/calendar/:group", get(calendar_handler))
         .route("/webcal/:group", get(calendar_handler))
         .route("/subscribe/:group", get(subscribe_handler))
+        .route("/static/telegram-web-app.js", get(telegram_web_app_js_handler))
+        .route("/telegram-web-app.js", get(telegram_web_app_js_handler))
         .route("/app", get(miniapp_handler))
         .route("/", get(index_handler))
         .with_state(state)
+}
+
+const TELEGRAM_WEB_APP_JS: &str = include_str!("../static/telegram-web-app.js");
+
+async fn telegram_web_app_js_handler() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "application/javascript; charset=utf-8"),
+            (
+                header::CACHE_CONTROL,
+                "public, max-age=31536000, immutable",
+            ),
+        ],
+        TELEGRAM_WEB_APP_JS,
+    )
 }
 
 async fn health_handler() -> impl IntoResponse {
@@ -498,6 +516,19 @@ mod tests {
         let state = AppState { db, config, client };
         let res = schedule_json_handler(AxumPath("М14О-101БВ-26".to_string()), State(state)).await;
         assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_telegram_web_app_js_handler() {
+        let response = telegram_web_app_js_handler().await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok()),
+            Some("application/javascript; charset=utf-8")
+        );
     }
 }
 
