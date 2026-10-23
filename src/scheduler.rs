@@ -198,7 +198,7 @@ async fn check_single_group(
             }
         }
         Err(e) => {
-            tracing::debug!("Не удалось загрузить расписание для группы {}: {:?}", group, e);
+            warn!("Не удалось загрузить расписание для группы {}: {:?}", group, e);
         }
     }
 }
@@ -276,7 +276,7 @@ async fn sync_all_group_schedules(
                     }
                 }
                 Err(e) => {
-                    tracing::debug!("[{}/{}] Не удалось загрузить расписание для группы {}: {:?}", current_num, total, group_clone, e);
+                    warn!("[{}/{}] Не удалось загрузить расписание для группы {}: {:?}", current_num, total, group_clone, e);
                 }
             }
         });
