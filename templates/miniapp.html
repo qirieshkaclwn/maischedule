@@ -711,39 +711,67 @@
         }
 
         // Initialize app
-        async function init() {
-            // Check query param
+        function init() {
             const urlParams = new URLSearchParams(window.location.search);
             const qGroup = urlParams.get("group");
+            let hasQueryGroup = false;
             if (qGroup) {
                 currentGroup = qGroup;
+                hasQueryGroup = true;
             } else {
                 const saved = localStorage.getItem("maischedule_group");
                 if (saved) currentGroup = saved;
             }
 
-            // Sync with Telegram user in DB if user is known
-            if (tgUser && tgUser.id) {
-                try {
-                    const uResp = await fetch(`${BASE_URL}/api/user/${tgUser.id}`);
-                    if (uResp.ok) {
-                        const uData = await uResp.json();
-                        if (uData && uData.group_name) {
-                            currentGroup = uData.group_name;
-                        }
-                        if (uData && uData.notifications_enabled !== undefined) {
+            updateGroupUi();
+            loadFromLocalCache();
+            loadSchedule();
+
+            syncUserData(hasQueryGroup);
+            setTimeout(loadAllGroups, 1800);
+        }
+
+        async function syncUserData(hasQueryGroup) {
+            if (!tgUser || !tgUser.id) return;
+            try {
+                const uResp = await fetch(`${BASE_URL}/api/user/${tgUser.id}`);
+                if (uResp.ok) {
+                    const uData = await uResp.json();
+                    if (uData) {
+                        if (uData.notifications_enabled !== undefined) {
                             notifEnabled = uData.notifications_enabled;
                             updateNotifButton();
                         }
+                        if (!hasQueryGroup && uData.group_name && uData.group_name !== currentGroup) {
+                            currentGroup = uData.group_name;
+                            updateGroupUi();
+                            loadFromLocalCache();
+                            loadSchedule();
+                        }
                     }
-                } catch (e) {
-                    console.error("Error fetching user info:", e);
                 }
+            } catch (e) {
+                console.error("Error fetching user info:", e);
             }
+        }
 
-            updateGroupUi();
-            loadSchedule();
-            loadAllGroups();
+        function loadFromLocalCache() {
+            try {
+                const raw = localStorage.getItem("schedule_cache_" + currentGroup);
+                if (!raw) return false;
+                const cached = JSON.parse(raw);
+                if (cached && cached.data) {
+                    scheduleData = cached.data;
+                    currentServerStatus = scheduleData.server_status;
+                    currentUpdatedAt = scheduleData.updated_at;
+                    updateServerWarningState();
+                    renderView();
+                    return true;
+                }
+            } catch (e) {
+                console.error("Cache read error:", e);
+            }
+            return false;
         }
 
         function updateGroupUi() {
@@ -756,14 +784,34 @@
             document.getElementById("apple-cal-btn").href = webcalUrl;
         }
 
+        let isLoadingGroups = false;
         async function loadAllGroups() {
+            if (isLoadingGroups || allGroups.length > 0) return;
+            isLoadingGroups = true;
             try {
+                const cachedGroups = sessionStorage.getItem("maischedule_all_groups");
+                if (cachedGroups) {
+                    try {
+                        allGroups = JSON.parse(cachedGroups);
+                        isLoadingGroups = false;
+                        return;
+                    } catch (_) {}
+                }
                 const resp = await fetch(`${BASE_URL}/api/groups`);
                 if (resp.ok) {
                     allGroups = await resp.json();
+                    try {
+                        sessionStorage.setItem("maischedule_all_groups", JSON.stringify(allGroups));
+                    } catch (_) {}
+                    const drawer = document.getElementById("group-drawer");
+                    if (drawer && drawer.classList.contains("open")) {
+                        filterGroups();
+                    }
                 }
             } catch (e) {
                 console.error("Error loading groups catalog:", e);
+            } finally {
+                isLoadingGroups = false;
             }
         }
 
@@ -774,11 +822,14 @@
         let scheduleLastError = null;
 
         async function loadSchedule() {
+            const hasCache = !!scheduleData;
             const listEl = document.getElementById("lessons-list");
-            listEl.innerHTML = `
-                <div class="lesson-card skeleton" style="height: 80px;"></div>
-                <div class="lesson-card skeleton" style="height: 80px;"></div>
-            `;
+            if (!hasCache) {
+                listEl.innerHTML = `
+                    <div class="lesson-card skeleton" style="height: 80px;"></div>
+                    <div class="lesson-card skeleton" style="height: 80px;"></div>
+                `;
+            }
 
             try {
                 const resp = await fetch(`${BASE_URL}/api/schedule/${encodeURIComponent(currentGroup)}`);
@@ -790,24 +841,33 @@
                     } catch (_) {}
                     throw new Error("HTTP " + resp.status);
                 }
-                scheduleData = await resp.json();
+                const freshData = await resp.json();
+                scheduleData = freshData;
                 currentServerStatus = scheduleData.server_status;
                 currentUpdatedAt = scheduleData.updated_at;
+                try {
+                    localStorage.setItem("schedule_cache_" + currentGroup, JSON.stringify({
+                        data: scheduleData,
+                        cachedAt: Date.now()
+                    }));
+                } catch (_) {}
                 updateServerWarningState();
                 renderView();
             } catch (e) {
                 console.error("Error loading schedule:", e);
                 updateServerWarningState(true, scheduleLastError || e.message);
-                listEl.innerHTML = `
-                    <div class="empty-state">
-                        <svg class="empty-icon" style="fill: #ff3b30;" viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
-                        <div class="empty-title">Сервер расписания не отвечает</div>
-                        <p class="empty-desc">Не удалось получить данные с сервера МАИ. Нажмите кнопку ниже для подробностей о статусе сервера.</p>
-                        <button class="btn-primary" onclick="showServerWarningModal()" style="margin-top: 14px; padding: 10px 18px; font-size: 13px;">
-                            Статус сервера расписания
-                        </button>
-                    </div>
-                `;
+                if (!hasCache) {
+                    listEl.innerHTML = `
+                        <div class="empty-state">
+                            <svg class="empty-icon" style="fill: #ff3b30;" viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
+                            <div class="empty-title">Сервер расписания не отвечает</div>
+                            <p class="empty-desc">Не удалось получить данные с сервера МАИ. Нажмите кнопку ниже для подробностей о статусе сервера.</p>
+                            <button class="btn-primary" onclick="showServerWarningModal()" style="margin-top: 14px; padding: 10px 18px; font-size: 13px;">
+                                Статус сервера расписания
+                            </button>
+                        </div>
+                    `;
+                }
             }
         }
 
@@ -1134,7 +1194,13 @@
             const drawer = document.getElementById("group-drawer");
             drawer.style.display = "flex";
             setTimeout(() => drawer.classList.add("open"), 10);
-            renderDrawerGroups(allGroups);
+            if (allGroups.length === 0) {
+                const listEl = document.getElementById("drawer-groups-list");
+                listEl.innerHTML = `<div style="text-align: center; color: var(--hint-color); padding: 24px;">Загрузка списка групп...</div>`;
+                loadAllGroups();
+            } else {
+                renderDrawerGroups(allGroups);
+            }
             document.getElementById("group-search-input").focus();
         }
 
@@ -1174,9 +1240,15 @@
 
         async function selectGroup(newGroupName) {
             hapticLight();
+            if (currentGroup === newGroupName) {
+                closeGroupDrawer();
+                return;
+            }
             currentGroup = newGroupName;
             closeGroupDrawer();
             updateGroupUi();
+            scheduleData = null;
+            loadFromLocalCache();
             loadSchedule();
             showToast(`Выбрана группа ${newGroupName}`);
 

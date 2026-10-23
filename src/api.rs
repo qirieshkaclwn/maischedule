@@ -24,6 +24,7 @@ pub async fn fetch_groups(client: &reqwest::Client) -> Result<Vec<GroupInfo>> {
         match client
             .get(GROUPS_URL)
             .header(reqwest::header::USER_AGENT, USER_AGENT)
+            .timeout(std::time::Duration::from_secs(5))
             .send()
             .await
         {
@@ -40,7 +41,7 @@ pub async fn fetch_groups(client: &reqwest::Client) -> Result<Vec<GroupInfo>> {
             }
         }
         if attempt < 3 {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     }
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("Не удалось загрузить список групп МАИ")))
@@ -55,6 +56,7 @@ pub async fn fetch_schedule(client: &reqwest::Client, group_name: &str) -> Resul
         match client
             .get(&url)
             .header(reqwest::header::USER_AGENT, USER_AGENT)
+            .timeout(std::time::Duration::from_secs(5))
             .send()
             .await
         {

@@ -60,7 +60,12 @@ async fn health_handler() -> impl IntoResponse {
 
 async fn groups_handler(State(state): State<AppState>) -> impl IntoResponse {
     match state.db.get_all_groups().await {
-        Ok(groups) => Json(groups).into_response(),
+        Ok(groups) => (
+            StatusCode::OK,
+            [(header::CACHE_CONTROL, "public, max-age=3600, stale-while-revalidate=86400")],
+            Json(groups),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Ошибка получения списка групп: {}", e),
@@ -201,12 +206,16 @@ async fn schedule_json_handler(
         },
     };
 
-    Json(ScheduleApiResponse {
-        group: schedule.group,
-        days: schedule.days,
-        updated_at,
-        server_status,
-    })
+    (
+        StatusCode::OK,
+        [(header::CACHE_CONTROL, "public, max-age=60, stale-while-revalidate=300")],
+        Json(ScheduleApiResponse {
+            group: schedule.group,
+            days: schedule.days,
+            updated_at,
+            server_status,
+        }),
+    )
     .into_response()
 }
 
