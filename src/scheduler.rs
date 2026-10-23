@@ -126,6 +126,7 @@ pub async fn sync_group_catalog(db: &Database, client: &reqwest::Client) {
     info!("Запрос списка всех групп МАИ из API...");
     match fetch_groups(client).await {
         Ok(groups) => {
+            let _ = db.record_schedule_server_success().await;
             let count = groups.len();
             if let Err(e) = db.save_groups(&groups).await {
                 error!("Ошибка сохранения групп в базу данных: {:?}", e);
@@ -134,6 +135,7 @@ pub async fn sync_group_catalog(db: &Database, client: &reqwest::Client) {
             }
         }
         Err(e) => {
+            let _ = db.record_schedule_server_failure(&e.to_string()).await;
             warn!("Не удалось загрузить список групп МАИ: {:?}", e);
         }
     }
@@ -149,6 +151,7 @@ async fn check_single_group(
     info!("Проверка расписания для группы: {}", group);
     match fetch_schedule(client, group).await {
         Ok(new_sched) => {
+            let _ = db.record_schedule_server_success().await;
             match db.get_snapshot(group).await {
                 Ok(Some(old_sched)) => {
                     let diff = detect_diff(&old_sched, &new_sched);
@@ -206,6 +209,7 @@ async fn check_single_group(
             }
         }
         Err(e) => {
+            let _ = db.record_schedule_server_failure(&e.to_string()).await;
             warn!("Не удалось загрузить расписание для группы {}: {:?}", group, e);
         }
     }

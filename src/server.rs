@@ -6,16 +6,26 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::error;
 
 use crate::api::fetch_schedule;
 use crate::calendar::generate_ical;
 use crate::config::Config;
-use crate::db::Database;
-use crate::models::GroupInfo;
+use crate::db::{Database, ScheduleServerStatus};
+use crate::models::{DaySchedule, GroupInfo};
 use crate::telegram::get_webcal_links;
-use crate::utils::{escape_html, url_decode};
+use crate::utils::{current_timestamp, escape_html, url_decode};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduleApiResponse {
+    pub group: String,
+    pub days: std::collections::BTreeMap<String, DaySchedule>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+    pub server_status: ScheduleServerStatus,
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -151,25 +161,53 @@ async fn schedule_json_handler(
         return (StatusCode::BAD_REQUEST, "Имя группы не может быть пустым").into_response();
     }
 
-    let schedule = match state.db.get_snapshot(&clean_group).await {
-        Ok(Some(s)) => s,
+    let mut server_status = state.db.get_schedule_server_status().await.unwrap_or(ScheduleServerStatus {
+        is_down: false,
+        down_since: None,
+        last_error: None,
+        last_success: None,
+    });
+
+    let (schedule, updated_at) = match state.db.get_snapshot_with_meta(&clean_group).await {
+        Ok(Some((s, dt))) => (s, Some(dt)),
         _ => match fetch_schedule(&state.client, &clean_group).await {
             Ok(s) => {
+                let _ = state.db.record_schedule_server_success().await;
                 let _ = state.db.save_snapshot(&s).await;
-                s
+                let now = current_timestamp();
+                server_status.is_down = false;
+                server_status.last_success = Some(now.clone());
+                (s, Some(now))
             }
             Err(e) => {
+                let err_msg = e.to_string();
+                let _ = state.db.record_schedule_server_failure(&err_msg).await;
+                server_status.is_down = true;
+                if server_status.down_since.is_none() {
+                    server_status.down_since = Some(current_timestamp());
+                }
+                server_status.last_error = Some(err_msg.clone());
+
                 error!("Не удалось получить расписание для {}: {:?}", clean_group, e);
                 return (
                     StatusCode::BAD_GATEWAY,
-                    format!("Ошибка загрузки расписания МАИ: {}", e),
+                    Json(json!({
+                        "error": format!("Ошибка загрузки расписания МАИ: {}", err_msg),
+                        "server_status": server_status,
+                    })),
                 )
                     .into_response();
             }
         },
     };
 
-    Json(schedule).into_response()
+    Json(ScheduleApiResponse {
+        group: schedule.group,
+        days: schedule.days,
+        updated_at,
+        server_status,
+    })
+    .into_response()
 }
 
 async fn user_info_handler(
@@ -421,6 +459,36 @@ mod tests {
             Json(ToggleNotificationsPayload { user_id: 12345 }),
         ).await;
         assert_eq!(notif_res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_schedule_json_handler() {
+        let config = Config {
+            bot_token: "".to_string(),
+            telegram_chat_id: None,
+            default_group: "М14О-101БВ-26".to_string(),
+            host: "0.0.0.0".to_string(),
+            port: 8000,
+            base_url: "http://localhost:8000".to_string(),
+            check_interval_minutes: 30,
+            all_groups_sync_hours: 12,
+            db_path: ":memory:".to_string(),
+            timezone: "Europe/Moscow".to_string(),
+            alert_minutes_before: 15,
+        };
+        let db = Database::new(":memory:").unwrap();
+        let client = reqwest::Client::new();
+
+        // Сохраняем тестовый снимок в БД
+        let sched = crate::models::GroupSchedule {
+            group: "М14О-101БВ-26".to_string(),
+            days: std::collections::BTreeMap::new(),
+        };
+        db.save_snapshot(&sched).await.unwrap();
+
+        let state = AppState { db, config, client };
+        let res = schedule_json_handler(AxumPath("М14О-101БВ-26".to_string()), State(state)).await;
+        assert_eq!(res.status(), StatusCode::OK);
     }
 }
 

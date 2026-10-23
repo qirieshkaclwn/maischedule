@@ -472,6 +472,96 @@
             transform: translateX(-50%) translateY(0);
         }
 
+        /* Warning Badge & Dialog */
+        .warning-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: #ff3b30;
+            color: #ffffff;
+            border: none;
+            border-radius: 12px;
+            padding: 4px 8px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.2px;
+            cursor: pointer;
+            box-shadow: 0 2px 6px rgba(255, 59, 48, 0.35);
+            animation: pulse-warning 2s infinite ease-in-out;
+            transition: transform 0.15s ease;
+        }
+
+        .warning-badge:active {
+            transform: scale(0.95);
+        }
+
+        .warning-icon-svg {
+            width: 13px;
+            height: 13px;
+            fill: #ffffff;
+            flex-shrink: 0;
+        }
+
+        @keyframes pulse-warning {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.04); box-shadow: 0 3px 10px rgba(255, 59, 48, 0.55); }
+            100% { transform: scale(1); }
+        }
+
+        .warning-dialog-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 24px;
+            background: rgba(255, 59, 48, 0.12);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto;
+        }
+
+        .warning-info-box {
+            background: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 12px 14px;
+            margin-bottom: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .warning-info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+        }
+
+        .warning-info-label {
+            color: var(--hint-color);
+            font-weight: 500;
+        }
+
+        .warning-info-val {
+            font-weight: 600;
+            color: var(--text-color);
+            text-align: right;
+        }
+
+        .warning-info-val.highlight {
+            color: #ff3b30;
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        .warning-note {
+            font-size: 12px;
+            color: var(--hint-color);
+            line-height: 1.45;
+            margin: 0 0 12px 0;
+            text-align: center;
+        }
+
         /* Loading Skeleton */
         .skeleton {
             background: linear-gradient(90deg, rgba(0,0,0,0.04) 25%, rgba(0,0,0,0.08) 50%, rgba(0,0,0,0.04) 75%);
@@ -490,7 +580,15 @@
     <div class="container">
         <!-- Top Bar -->
         <div class="top-bar">
-            <h1 class="app-title">Расписание МАИ</h1>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <h1 class="app-title">Расписание МАИ</h1>
+                <button id="server-warning-btn" class="warning-badge" onclick="showServerWarningModal()" style="display: none;" title="Статус сервера расписания">
+                    <svg class="warning-icon-svg" viewBox="0 0 24 24">
+                        <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
+                    </svg>
+                    <span id="warning-badge-label">Сбой API</span>
+                </button>
+            </div>
             <div id="group-chip" class="group-chip" onclick="openGroupDrawer()">
                 <span id="current-group-label">__DEFAULT_GROUP__</span>
                 <svg class="icon-svg" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
@@ -552,6 +650,42 @@
             >
         </div>
         <div id="drawer-groups-list" class="groups-list"></div>
+    </div>
+
+    <!-- Server Warning Modal -->
+    <div id="warning-overlay" class="drawer-overlay" onclick="closeServerWarningModal()"></div>
+    <div id="warning-modal" class="drawer">
+        <div class="drawer-handle"></div>
+        <div style="text-align: center; margin-bottom: 12px;">
+            <div class="warning-dialog-icon">
+                <svg style="width: 28px; height: 28px; fill: #ff3b30;" viewBox="0 0 24 24">
+                    <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
+                </svg>
+            </div>
+            <div class="drawer-title" style="margin-top: 8px;">Сервер расписания МАИ не отвечает</div>
+        </div>
+        <div class="warning-info-box">
+            <div class="warning-info-row">
+                <span class="warning-info-label">Не отвечает уже:</span>
+                <span id="warning-downtime-value" class="warning-info-val highlight">--</span>
+            </div>
+            <div class="warning-info-row">
+                <span class="warning-info-label">Сбой начался:</span>
+                <span id="warning-since-value" class="warning-info-val">--</span>
+            </div>
+            <div class="warning-info-row">
+                <span class="warning-info-label">Сохраненная копия:</span>
+                <span id="warning-cache-value" class="warning-info-val">--</span>
+            </div>
+            <div id="warning-error-row" class="warning-info-row" style="display: none;">
+                <span class="warning-info-label">Детали ошибки:</span>
+                <span id="warning-error-value" class="warning-info-val" style="font-size: 11px; color: var(--hint-color); max-width: 60%; word-break: break-word;">--</span>
+            </div>
+        </div>
+        <p class="warning-note">
+            Сервер расписания МАИ (public.mai.ru) временно недоступен или долго не отдает свежие данные. Отображается последняя сохраненная копия.
+        </p>
+        <button class="btn-primary" onclick="closeServerWarningModal()" style="margin-top: 4px;">Понятно</button>
     </div>
 
     <!-- Toast message -->
@@ -633,6 +767,12 @@
             }
         }
 
+        let currentServerStatus = null;
+        let currentUpdatedAt = null;
+        let isScheduleServerDown = false;
+        let scheduleDowntimeStart = null;
+        let scheduleLastError = null;
+
         async function loadSchedule() {
             const listEl = document.getElementById("lessons-list");
             listEl.innerHTML = `
@@ -642,18 +782,142 @@
 
             try {
                 const resp = await fetch(`${BASE_URL}/api/schedule/${encodeURIComponent(currentGroup)}`);
-                if (!resp.ok) throw new Error("Status " + resp.status);
+                if (!resp.ok) {
+                    try {
+                        const errData = await resp.json();
+                        currentServerStatus = errData.server_status;
+                        scheduleLastError = errData.error;
+                    } catch (_) {}
+                    throw new Error("HTTP " + resp.status);
+                }
                 scheduleData = await resp.json();
+                currentServerStatus = scheduleData.server_status;
+                currentUpdatedAt = scheduleData.updated_at;
+                updateServerWarningState();
                 renderView();
             } catch (e) {
                 console.error("Error loading schedule:", e);
+                updateServerWarningState(true, scheduleLastError || e.message);
                 listEl.innerHTML = `
                     <div class="empty-state">
-                        <div class="empty-title">Не удалось загрузить расписание</div>
-                        <p class="empty-desc">Проверьте соединение или правильность названия группы.</p>
+                        <svg class="empty-icon" style="fill: #ff3b30;" viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
+                        <div class="empty-title">Сервер расписания не отвечает</div>
+                        <p class="empty-desc">Не удалось получить данные с сервера МАИ. Нажмите кнопку ниже для подробностей о статусе сервера.</p>
+                        <button class="btn-primary" onclick="showServerWarningModal()" style="margin-top: 14px; padding: 10px 18px; font-size: 13px;">
+                            Статус сервера расписания
+                        </button>
                     </div>
                 `;
             }
+        }
+
+        function updateServerWarningState(forceDown = false, errorMsg = null) {
+            const warnBtn = document.getElementById("server-warning-btn");
+            if (!warnBtn) return;
+
+            isScheduleServerDown = false;
+            scheduleDowntimeStart = null;
+
+            if (currentServerStatus && currentServerStatus.is_down) {
+                isScheduleServerDown = true;
+                if (currentServerStatus.down_since) {
+                    scheduleDowntimeStart = new Date(currentServerStatus.down_since);
+                }
+                scheduleLastError = currentServerStatus.last_error;
+            } else if (forceDown) {
+                isScheduleServerDown = true;
+                if (!scheduleDowntimeStart) scheduleDowntimeStart = new Date();
+                if (errorMsg) scheduleLastError = errorMsg;
+            } else if (currentUpdatedAt) {
+                const updatedDate = new Date(currentUpdatedAt);
+                const ageHours = (Date.now() - updatedDate.getTime()) / (1000 * 3600);
+                if (ageHours >= 24) {
+                    isScheduleServerDown = true;
+                    scheduleDowntimeStart = updatedDate;
+                    scheduleLastError = "Сервер МАИ не присылал обновлений более 24 часов";
+                }
+            }
+
+            if (isScheduleServerDown) {
+                warnBtn.style.display = "inline-flex";
+                if (!scheduleDowntimeStart || isNaN(scheduleDowntimeStart.getTime())) {
+                    scheduleDowntimeStart = new Date();
+                }
+            } else {
+                warnBtn.style.display = "none";
+            }
+        }
+
+        function formatDuration(sinceDate) {
+            if (!sinceDate || isNaN(sinceDate.getTime())) return "неизвестно";
+            const diffMs = Math.max(0, Date.now() - sinceDate.getTime());
+            const totalMins = Math.floor(diffMs / 60000);
+            if (totalMins < 1) return "меньше минуты";
+            const days = Math.floor(totalMins / 1440);
+            const hours = Math.floor((totalMins % 1440) / 60);
+            const mins = totalMins % 60;
+
+            const parts = [];
+            if (days > 0) parts.push(`${days} дн.`);
+            if (hours > 0 || days > 0) parts.push(`${hours} ч.`);
+            if (mins > 0 || parts.length === 0) parts.push(`${mins} мин.`);
+            return parts.join(" ");
+        }
+
+        function formatRuDateTime(d) {
+            if (!d || isNaN(d.getTime())) return "неизвестно";
+            const months = ["янв.", "фев.", "мар.", "апр.", "мая", "июн.", "июл.", "авг.", "сен.", "окт.", "нояб.", "дек."];
+            const hh = String(d.getHours()).padStart(2, "0");
+            const mm = String(d.getMinutes()).padStart(2, "0");
+            return `${d.getDate()} ${months[d.getMonth()]} в ${hh}:${mm}`;
+        }
+
+        function showServerWarningModal() {
+            if (tg && tg.HapticFeedback) {
+                tg.HapticFeedback.notificationOccurred("warning");
+            }
+
+            const downtimeEl = document.getElementById("warning-downtime-value");
+            const sinceEl = document.getElementById("warning-since-value");
+            const cacheEl = document.getElementById("warning-cache-value");
+            const errRow = document.getElementById("warning-error-row");
+            const errVal = document.getElementById("warning-error-value");
+
+            downtimeEl.textContent = formatDuration(scheduleDowntimeStart);
+
+            if (scheduleDowntimeStart) {
+                sinceEl.textContent = formatRuDateTime(scheduleDowntimeStart);
+            } else {
+                sinceEl.textContent = "неизвестно";
+            }
+
+            if (currentUpdatedAt) {
+                const cacheDate = new Date(currentUpdatedAt);
+                cacheEl.textContent = formatRuDateTime(cacheDate);
+            } else {
+                cacheEl.textContent = "нет копии";
+            }
+
+            if (scheduleLastError) {
+                errRow.style.display = "flex";
+                errVal.textContent = scheduleLastError;
+            } else {
+                errRow.style.display = "none";
+            }
+
+            document.getElementById("warning-overlay").style.display = "block";
+            const modal = document.getElementById("warning-modal");
+            modal.style.display = "flex";
+            setTimeout(() => modal.classList.add("open"), 10);
+        }
+
+        function closeServerWarningModal() {
+            const modal = document.getElementById("warning-modal");
+            modal.classList.remove("open");
+            setTimeout(() => {
+                modal.style.display = "none";
+                document.getElementById("warning-overlay").style.display = "none";
+            }, 250);
         }
 
         // Format dates

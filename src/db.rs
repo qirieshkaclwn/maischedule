@@ -1,11 +1,20 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 use rusqlite::params;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::models::{ChangeRecord, GroupInfo, GroupSchedule, User};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ScheduleServerStatus {
+    pub is_down: bool,
+    pub down_since: Option<String>,
+    pub last_error: Option<String>,
+    pub last_success: Option<String>,
+}
 
 
 #[derive(Clone)]
@@ -452,18 +461,57 @@ impl Database {
 
     // --- Снимки расписаний (schedule_snapshots) ---
 
-    pub async fn get_snapshot(&self, group_name: &str) -> Result<Option<GroupSchedule>> {
+    pub async fn get_snapshot_with_meta(&self, group_name: &str) -> Result<Option<(GroupSchedule, String)>> {
         let conn = self.conn.lock().await;
-        let mut stmt = conn.prepare("SELECT schedule_json FROM schedule_snapshots WHERE group_name = ?")?;
+        let mut stmt = conn.prepare("SELECT schedule_json, updated_at FROM schedule_snapshots WHERE group_name = ?")?;
         let mut rows = stmt.query(params![group_name.trim()])?;
 
         if let Some(row) = rows.next()? {
             let json_str: String = row.get(0)?;
+            let updated_at: String = row.get(1)?;
             let schedule: GroupSchedule = serde_json::from_str(&json_str)?;
-            Ok(Some(schedule))
+            Ok(Some((schedule, updated_at)))
         } else {
             Ok(None)
         }
+    }
+
+    pub async fn get_snapshot(&self, group_name: &str) -> Result<Option<GroupSchedule>> {
+        Ok(self.get_snapshot_with_meta(group_name).await?.map(|(s, _)| s))
+    }
+
+    // --- Отслеживание доступности внешнего сервера расписаний МАИ ---
+
+    pub async fn record_schedule_server_success(&self) -> Result<()> {
+        let now = current_timestamp();
+        self.set_metadata("schedule_server_is_down", "false").await?;
+        self.set_metadata("schedule_server_last_success", &now).await?;
+        Ok(())
+    }
+
+    pub async fn record_schedule_server_failure(&self, error: &str) -> Result<()> {
+        let now = current_timestamp();
+        let was_down = self.get_metadata("schedule_server_is_down").await?.as_deref() == Some("true");
+        if !was_down {
+            self.set_metadata("schedule_server_is_down", "true").await?;
+            self.set_metadata("schedule_server_down_since", &now).await?;
+        }
+        self.set_metadata("schedule_server_last_error", error).await?;
+        Ok(())
+    }
+
+    pub async fn get_schedule_server_status(&self) -> Result<ScheduleServerStatus> {
+        let is_down = self.get_metadata("schedule_server_is_down").await?.as_deref() == Some("true");
+        let down_since = self.get_metadata("schedule_server_down_since").await?;
+        let last_error = self.get_metadata("schedule_server_last_error").await?;
+        let last_success = self.get_metadata("schedule_server_last_success").await?;
+
+        Ok(ScheduleServerStatus {
+            is_down,
+            down_since,
+            last_error,
+            last_success,
+        })
     }
 
     pub async fn save_snapshot(&self, schedule: &GroupSchedule) -> Result<()> {

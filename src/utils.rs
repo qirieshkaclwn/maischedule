@@ -83,6 +83,11 @@ pub fn url_decode(input: &str) -> String {
     String::from_utf8_lossy(&bytes).to_string()
 }
 
+/// Returns the current UTC timestamp formatted as RFC 3339 string.
+pub fn current_timestamp() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
