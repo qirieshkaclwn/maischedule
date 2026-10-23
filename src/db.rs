@@ -64,13 +64,6 @@ impl Database {
                 updated_at TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS subscribers (
-                chat_id INTEGER PRIMARY KEY,
-                group_name TEXT NOT NULL,
-                username TEXT,
-                created_at TEXT NOT NULL
-            );
-
             CREATE TABLE IF NOT EXISTS change_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 group_name TEXT NOT NULL,
@@ -88,19 +81,50 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_mai_groups_lower ON mai_groups(name_lower);
             CREATE INDEX IF NOT EXISTS idx_mai_groups_course ON mai_groups(course);
             CREATE INDEX IF NOT EXISTS idx_mai_groups_fac ON mai_groups(fac);
-            CREATE INDEX IF NOT EXISTS idx_subscribers_group ON subscribers(group_name);
             CREATE INDEX IF NOT EXISTS idx_change_history_group_id ON change_history(group_name, id DESC);
             "#,
         )?;
 
-        // Автоматическая миграция подписчиков из legacy таблицы subscribers в users
-        let _ = conn.execute(
+        // Миграция и оптимизация хранения данных пользователей:
+        // Проверяем, существует ли subscribers как физическая таблица (не view)
+        let is_subscribers_table: bool = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'subscribers'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap_or(false);
+
+        if is_subscribers_table {
+            // Переносим любые остаточные данные из legacy таблицы subscribers в users
+            let _ = conn.execute(
+                r#"
+                INSERT OR IGNORE INTO users (id, group_name, username, first_name, notifications_enabled, created_at, updated_at)
+                SELECT chat_id, group_name, username, NULL, 1, created_at, created_at
+                FROM subscribers
+                WHERE chat_id IS NOT NULL;
+                "#,
+                [],
+            );
+            let _ = conn.execute("DROP INDEX IF EXISTS idx_subscribers_group;", []);
+            let _ = conn.execute("DROP TABLE IF EXISTS subscribers;", []);
+        }
+
+        // Создаем VIEW subscribers над users для 100% обратной совместимости
+        conn.execute(
             r#"
-            INSERT OR IGNORE INTO users (id, group_name, username, first_name, notifications_enabled, created_at, updated_at)
-            SELECT chat_id, group_name, username, NULL, 1, created_at, created_at FROM subscribers;
+            CREATE VIEW IF NOT EXISTS subscribers AS
+            SELECT
+                id AS chat_id,
+                group_name,
+                username,
+                created_at
+            FROM users
+            WHERE group_name IS NOT NULL AND TRIM(group_name) != '';
             "#,
             [],
-        );
+        )?;
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -260,21 +284,6 @@ impl Database {
             params![id, clean_grp, username, first_name, now],
         )?;
 
-        // Синхронизация с legacy таблицей subscribers
-        if let Some(grp) = clean_grp {
-            conn.execute(
-                r#"
-                INSERT INTO subscribers (chat_id, group_name, username, created_at)
-                VALUES (?1, ?2, ?3, ?4)
-                ON CONFLICT(chat_id) DO UPDATE SET
-                    group_name = excluded.group_name,
-                    username = excluded.username,
-                    created_at = excluded.created_at
-                "#,
-                params![id, grp, username, now],
-            )?;
-        }
-
         Ok(())
     }
 
@@ -290,18 +299,6 @@ impl Database {
             ON CONFLICT(id) DO UPDATE SET
                 group_name = excluded.group_name,
                 updated_at = excluded.updated_at
-            "#,
-            params![id, clean_grp, now],
-        )?;
-
-        // Синхронизация с legacy таблицей subscribers
-        conn.execute(
-            r#"
-            INSERT INTO subscribers (chat_id, group_name, username, created_at)
-            VALUES (?1, ?2, NULL, ?3)
-            ON CONFLICT(chat_id) DO UPDATE SET
-                group_name = excluded.group_name,
-                created_at = excluded.created_at
             "#,
             params![id, clean_grp, now],
         )?;
@@ -341,15 +338,7 @@ impl Database {
             let grp: Option<String> = row.get(0)?;
             Ok(grp.filter(|s| !s.trim().is_empty()))
         } else {
-            // Fallback to legacy subscribers table
-            let mut legacy_stmt = conn.prepare("SELECT group_name FROM subscribers WHERE chat_id = ?")?;
-            let mut legacy_rows = legacy_stmt.query(params![id])?;
-            if let Some(r) = legacy_rows.next()? {
-                let grp: String = r.get(0)?;
-                Ok(Some(grp))
-            } else {
-                Ok(None)
-            }
+            Ok(None)
         }
     }
 
@@ -408,13 +397,8 @@ impl Database {
         let clean_grp = group_name.trim();
         let conn = self.conn.lock().await;
 
-        // Таблица users является основным источником правды для подписчиков и их настроек уведомлений
         let mut stmt = conn.prepare(
-            r#"
-            SELECT id FROM users WHERE group_name = ?1 AND notifications_enabled = 1
-            UNION
-            SELECT chat_id FROM subscribers WHERE group_name = ?1 AND chat_id NOT IN (SELECT id FROM users)
-            "#,
+            "SELECT id FROM users WHERE group_name = ?1 AND notifications_enabled = 1",
         )?;
         let mut rows = stmt.query(params![clean_grp])?;
 
@@ -430,11 +414,7 @@ impl Database {
     pub async fn get_all_active_groups(&self) -> Result<Vec<String>> {
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
-            r#"
-            SELECT DISTINCT group_name FROM users WHERE group_name IS NOT NULL AND TRIM(group_name) != ''
-            UNION
-            SELECT DISTINCT group_name FROM subscribers WHERE TRIM(group_name) != ''
-            "#,
+            "SELECT DISTINCT group_name FROM users WHERE group_name IS NOT NULL AND TRIM(group_name) != ''",
         )?;
         let mut rows = stmt.query([])?;
 
@@ -454,8 +434,6 @@ impl Database {
         let mut stmt = conn.prepare(
             r#"
             SELECT DISTINCT group_name FROM users WHERE group_name IS NOT NULL AND TRIM(group_name) != ''
-            UNION
-            SELECT DISTINCT group_name FROM subscribers WHERE TRIM(group_name) != ''
             UNION
             SELECT DISTINCT group_name FROM schedule_snapshots
             "#,
@@ -560,6 +538,22 @@ impl Database {
             });
         }
         Ok(list)
+    }
+
+    pub async fn cleanup_old_changes(&self, days_to_keep: i64) -> Result<usize> {
+        let cutoff = (chrono::Utc::now() - chrono::Duration::days(days_to_keep)).to_rfc3339();
+        let conn = self.conn.lock().await;
+        let deleted = conn.execute(
+            "DELETE FROM change_history WHERE created_at < ?1",
+            params![cutoff],
+        )?;
+        Ok(deleted)
+    }
+
+    pub async fn optimize(&self) -> Result<()> {
+        let conn = self.conn.lock().await;
+        conn.execute_batch("PRAGMA optimize;")?;
+        Ok(())
     }
 
     // --- Системные метаданные приложения ---
@@ -808,6 +802,74 @@ mod tests {
         db.set_last_all_groups_sync(now).await.unwrap();
         let loaded = db.get_last_all_groups_sync().await.unwrap().expect("Should have sync time");
         assert_eq!(loaded.timestamp(), now.timestamp());
+    }
+
+    #[tokio::test]
+    async fn test_db_cleanup_old_changes() {
+        let db = Database::new(":memory:").expect("Failed to create in-memory db");
+        db.log_change("М14О-101БВ-26", "Moved", "Тестовое изменение 1").await.unwrap();
+
+        // Проверяем наличие записи
+        let changes = db.get_recent_changes("М14О-101БВ-26", 10).await.unwrap();
+        assert_eq!(changes.len(), 1);
+
+        // Очистка записей старше 0 дней не удалит свежую запись (так как она создана прямо сейчас)
+        let deleted = db.cleanup_old_changes(1).await.unwrap();
+        assert_eq!(deleted, 0);
+
+        // Вставляем вручную старую запись
+        {
+            let conn = db.conn.lock().await;
+            conn.execute(
+                "INSERT INTO change_history (group_name, change_type, description, created_at) VALUES ('М14О-101БВ-26', 'Cancelled', 'Старое', '2020-01-01T00:00:00Z')",
+                [],
+            ).unwrap();
+        }
+
+        let changes = db.get_recent_changes("М14О-101БВ-26", 10).await.unwrap();
+        assert_eq!(changes.len(), 2);
+
+        let deleted = db.cleanup_old_changes(30).await.unwrap();
+        assert_eq!(deleted, 1);
+
+        let changes = db.get_recent_changes("М14О-101БВ-26", 10).await.unwrap();
+        assert_eq!(changes.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_db_legacy_table_migration_to_view() {
+        let db_path = std::env::temp_dir().join(format!("test_legacy_migration_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&db_path);
+
+        // 1. Создаем старую БД с реальной таблицей subscribers
+        {
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                r#"
+                CREATE TABLE subscribers (
+                    chat_id INTEGER PRIMARY KEY,
+                    group_name TEXT NOT NULL,
+                    username TEXT,
+                    created_at TEXT NOT NULL
+                );
+                INSERT INTO subscribers VALUES (999, 'М14О-101БВ-26', 'old_user', '2026-01-01T00:00:00Z');
+                "#,
+            ).unwrap();
+        }
+
+        // 2. Инициализируем Database - должна выполниться автомиграция
+        let db = Database::new(db_path.to_str().unwrap()).unwrap();
+
+        // 3. Пользователь должен быть в users
+        let user = db.get_user(999).await.unwrap().expect("User should be migrated");
+        assert_eq!(user.group_name.as_deref(), Some("М14О-101БВ-26"));
+        assert_eq!(user.username.as_deref(), Some("old_user"));
+
+        // 4. subscribers доступен через view
+        let subs = db.get_subscribers_for_group("М14О-101БВ-26").await.unwrap();
+        assert!(subs.contains(&999));
+
+        let _ = std::fs::remove_file(&db_path);
     }
 }
 

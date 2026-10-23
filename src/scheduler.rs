@@ -25,6 +25,8 @@ pub async fn run_scheduler(
 
     // Первичная синхронизация каталога всех групп МАИ при старте
     sync_group_catalog(&db, &client).await;
+    let _ = db.cleanup_old_changes(60).await;
+    let _ = db.optimize().await;
 
     // Пауза 5 секунд перед началом первого цикла проверок (прерываемая сигналом остановки)
     tokio::select! {
@@ -38,9 +40,15 @@ pub async fn run_scheduler(
     let mut last_catalog_sync = std::time::Instant::now();
 
     loop {
-        // Раз в 24 часа обновляем справочник групп МАИ
+        // Раз в 24 часа обновляем справочник групп МАИ и оптимизируем БД
         if last_catalog_sync.elapsed() >= Duration::from_secs(24 * 3600) {
             sync_group_catalog(&db, &client).await;
+            if let Ok(count) = db.cleanup_old_changes(60).await {
+                if count > 0 {
+                    info!("Очищено {} устаревших записей истории изменений (> 60 дней).", count);
+                }
+            }
+            let _ = db.optimize().await;
             last_catalog_sync = std::time::Instant::now();
         }
 
