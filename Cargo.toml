@@ -1,6 +1,6 @@
 [package]
 name = "maischedule"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2021"
 description = "Автоматическая синхронизация расписания МАИ с календарем (Webcal/iOS) и уведомлениями в Telegram на Rust"
 

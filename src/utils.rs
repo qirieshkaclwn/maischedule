@@ -121,6 +121,7 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let check_files = [
             "README.md",
+            "FEATURES.md",
             "Agents.md",
             "Cargo.toml",
             "Dockerfile",
