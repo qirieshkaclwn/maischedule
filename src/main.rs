@@ -21,6 +21,9 @@ use crate::scheduler::run_scheduler;
 use crate::server::{create_router, AppState};
 use crate::telegram::{run_polling, TelegramBot};
 
+const RU_ROOT_CA: &[u8] = include_bytes!("../certs/russian_trusted_root_ca.pem");
+const RU_SUB_CA: &[u8] = include_bytes!("../certs/russian_trusted_sub_ca.pem");
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Инициализация легковесного логирования
@@ -48,10 +51,16 @@ async fn main() -> Result<()> {
     let db = Database::new(&config.db_path)?;
 
     // Общий HTTP клиент с пулом соединений (connect_timeout 10с, таймаут 60с для long-polling)
-    let http_client = reqwest::Client::builder()
+    let mut http_builder = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(60))
-        .build()?;
+        .timeout(std::time::Duration::from_secs(60));
+
+    // public.mai.ru отдаёт сертификат от УЦ Минцифры — его нет в стандартном наборе rustls
+    for pem in [RU_ROOT_CA, RU_SUB_CA] {
+        http_builder = http_builder.add_root_certificate(reqwest::Certificate::from_pem(pem)?);
+    }
+
+    let http_client = http_builder.build()?;
 
     // Настройка и запуск Axum веб-сервера с graceful shutdown
     let state = AppState {

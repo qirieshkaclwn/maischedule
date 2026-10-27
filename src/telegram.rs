@@ -1108,6 +1108,8 @@ mod tests {
             db_path: "data/db.sqlite".to_string(),
             timezone: "Europe/Moscow".to_string(),
             alert_minutes_before: 15,
+            snapshot_dir: String::new(),
+            ingest_token: String::new(),
         };
 
         let (webcal, https) = get_webcal_links(&config, "GROUP-1");

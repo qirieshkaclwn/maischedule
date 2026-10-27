@@ -33,7 +33,7 @@ server {
     ssl_session_timeout 1d;
 
     # Максимальный размер тела запроса
-    client_max_body_size 16M;
+    client_max_body_size 64M;
 
     # Gzip сжатие для быстродействия календарей и страниц
     gzip on;

@@ -17,8 +17,48 @@ pub fn get_group_hash(group_name: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Каталог со снапшотом, присланным сборщиком из сети МАИ.
+/// Пока он настроен и в нём есть файлы, сеть не трогаем вообще.
+fn snapshot_dir() -> Option<std::path::PathBuf> {
+    static DIR: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        std::env::var("SNAPSHOT_DIR")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .map(std::path::PathBuf::from)
+    })
+    .clone()
+}
+
+async fn read_snapshot_file(name: &str) -> Option<Vec<u8>> {
+    let dir = snapshot_dir()?;
+    tokio::fs::read(dir.join(name)).await.ok()
+}
+
+/// Работаем ли мы от снапшота, присланного сборщиком.
+/// Признак — заданный каталог, в котором уже лежит справочник групп.
+pub fn snapshot_mode() -> bool {
+    snapshot_dir()
+        .map(|dir| dir.join("groups.json").exists())
+        .unwrap_or(false)
+}
+
 #[allow(dead_code)]
 pub async fn fetch_groups(client: &reqwest::Client) -> Result<Vec<GroupInfo>> {
+    // Снапшот из сети МАИ приоритетнее: он свежее и не требует прямого доступа
+    if let Some(bytes) = read_snapshot_file("groups.json").await {
+        match serde_json::from_slice::<Vec<GroupInfo>>(&bytes) {
+            Ok(groups) => return Ok(groups),
+            Err(e) => {
+                if snapshot_mode() {
+                    anyhow::bail!("снапшот groups.json повреждён: {}", e);
+                }
+                tracing::warn!("Снапшот groups.json повреждён, перехожу на прямой запрос к public.mai.ru");
+            }
+        }
+    }
+
     let mut last_err = None;
     for attempt in 1..=3 {
         match client
@@ -49,6 +89,24 @@ pub async fn fetch_groups(client: &reqwest::Client) -> Result<Vec<GroupInfo>> {
 
 pub async fn fetch_schedule(client: &reqwest::Client, group_name: &str) -> Result<GroupSchedule> {
     let hash = get_group_hash(group_name);
+
+    // Снапшот из сети МАИ приоритетнее: он не требует прямого доступа к public.mai.ru
+    if let Some(bytes) = read_snapshot_file(&format!("{}.json", hash)).await {
+        match serde_json::from_slice::<Value>(&bytes) {
+            Ok(val) => return parse_schedule_json(val, group_name),
+            Err(e) => {
+                if snapshot_mode() {
+                    anyhow::bail!("снапшот {}.json повреждён: {}", hash, e);
+                }
+                tracing::warn!("Снапшот {}.json повреждён ({}), иду в сеть", hash, e);
+            }
+        }
+    } else if snapshot_mode() {
+        // Файла нет — значит у группы нет расписания. В сеть не идём: снаружи МАИ недоступен,
+        // и попытка лишь повесит проверку на таймауте.
+        anyhow::bail!("расписания группы {} нет в снапшоте", group_name);
+    }
+
     let url = SCHEDULE_URL_TEMPLATE.replace("{md5}", &hash);
 
     let mut last_err = None;

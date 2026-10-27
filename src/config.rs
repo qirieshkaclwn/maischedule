@@ -13,6 +13,11 @@ pub struct Config {
     pub db_path: String,
     pub timezone: String,
     pub alert_minutes_before: u32,
+    /// Каталог со снапшотом расписания, присланным сборщиком из сети МАИ.
+    /// Если пусто — расписание загружается напрямую с public.mai.ru.
+    pub snapshot_dir: String,
+    /// Токен для приёма снапшота. Если пусто — приём отключён.
+    pub ingest_token: String,
 }
 
 impl Config {
@@ -49,6 +54,14 @@ impl Config {
             .ok()
             .and_then(|s| s.parse::<u32>().ok())
             .unwrap_or(15);
+        let snapshot_dir = env::var("SNAPSHOT_DIR")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let ingest_token = env::var("INGEST_TOKEN")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
 
         Self {
             bot_token,
@@ -62,6 +75,8 @@ impl Config {
             db_path,
             timezone,
             alert_minutes_before,
+            snapshot_dir,
+            ingest_token,
         }
     }
 }

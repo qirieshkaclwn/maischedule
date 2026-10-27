@@ -1,8 +1,26 @@
+# Сборка
 /target
+/collector/target
+
+# Локальные инструменты и кеши (не для репозитория)
+/.cargo-home/
+/.rustup-home/
+/.docker-config/
+/.tools/
+/.probe/
+/.netprobe/
+
+# Секреты и данные
 .env
+*.env
+.deploy-token
 data/
+
+# Промежуточные архивы
 *.tar
 *.tar.gz
+
+# Служебное
 .idea/
 Agents.md
 AGENTS.md

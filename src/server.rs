@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use axum::{
-    extract::{Path as AxumPath, Query, State},
+    extract::{DefaultBodyLimit, Path as AxumPath, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
@@ -8,7 +8,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::error;
+use tracing::{error, info};
 
 use crate::api::fetch_schedule;
 use crate::calendar::generate_ical;
@@ -49,7 +49,163 @@ pub fn create_router(state: AppState) -> Router {
         .route("/telegram-web-app.js", get(telegram_web_app_js_handler))
         .route("/app", get(miniapp_handler))
         .route("/", get(index_handler))
+        .route(
+            "/internal/ingest",
+            post(ingest_handler).layer(DefaultBodyLimit::max(96 * 1024 * 1024)),
+        )
         .with_state(state)
+}
+
+fn tokens_equal(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Распаковывает tar.gz со снапшотом во временный каталог и атомарно подменяет им рабочий.
+fn install_snapshot(dir: &std::path::Path, data: &[u8]) -> anyhow::Result<usize> {
+    use std::io::Read;
+
+    /// Потолок на один файл расписания: всё, что больше, — точно не расписание.
+    const MAX_FILE_BYTES: u64 = 32 * 1024 * 1024;
+
+    let parent = dir
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    std::fs::create_dir_all(&parent)?;
+
+    // Уникальный суффикс на каждый вызов: два параллельных приёма не должны делить каталоги
+    let unique = format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+    let tmp = parent.join(format!(".snapshot-tmp-{}", unique));
+    let old = parent.join(format!(".snapshot-old-{}", unique));
+    if tmp.exists() {
+        std::fs::remove_dir_all(&tmp)?;
+    }
+    std::fs::create_dir_all(&tmp)?;
+
+    let unpacked = (|| -> anyhow::Result<usize> {
+        let mut decoder = flate2::read::GzDecoder::new(data);
+        let mut archive = tar::Archive::new(&mut decoder);
+        let mut count = 0usize;
+
+        for entry in archive.entries()? {
+            let entry = entry?;
+            let path = entry.path()?.to_path_buf();
+            let name = match path.file_name().and_then(|s| s.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            // Только плоские имена вида <md5>.json или groups.json — никаких путей и переходов вверх
+            let valid = path.components().count() == 1
+                && name.ends_with(".json")
+                && name.len() <= 128
+                && !name.starts_with('.');
+            if !valid {
+                continue;
+            }
+
+            let mut buf = Vec::new();
+            entry.take(MAX_FILE_BYTES + 1).read_to_end(&mut buf)?;
+            if buf.len() as u64 > MAX_FILE_BYTES {
+                anyhow::bail!("файл {} больше {} МБ", name, MAX_FILE_BYTES / 1024 / 1024);
+            }
+            std::fs::write(tmp.join(&name), &buf)?;
+            count += 1;
+        }
+
+        if count == 0 {
+            anyhow::bail!("снапшот не содержит ни одного json-файла");
+        }
+        Ok(count)
+    })();
+
+    let count = match unpacked {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&tmp);
+            return Err(e);
+        }
+    };
+
+    if old.exists() {
+        std::fs::remove_dir_all(&old)?;
+    }
+    if dir.exists() {
+        std::fs::rename(dir, &old)?;
+    }
+    std::fs::rename(&tmp, dir)?;
+    if old.exists() {
+        std::fs::remove_dir_all(&old)?;
+    }
+    Ok(count)
+}
+
+/// Приём снапшота расписания от сборщика, работающего внутри сети МАИ.
+async fn ingest_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let expected = state.config.ingest_token.trim().to_string();
+    if expected.is_empty() {
+        return (StatusCode::NOT_FOUND, "ingest disabled").into_response();
+    }
+
+    let got = headers
+        .get("x-ingest-token")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if !tokens_equal(got.as_bytes(), expected.as_bytes()) {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+
+    let dir = state.config.snapshot_dir.trim().to_string();
+    if dir.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "SNAPSHOT_DIR не задан").into_response();
+    }
+    if body.is_empty() {
+        return (StatusCode::BAD_REQUEST, "empty body").into_response();
+    }
+
+    let size = body.len();
+    let path = std::path::PathBuf::from(dir);
+    match tokio::task::spawn_blocking(move || install_snapshot(&path, &body)).await {
+        Ok(Ok(files)) => {
+            info!(files, bytes = size, "Снапшот расписания принят");
+            (
+                StatusCode::OK,
+                Json(json!({"ok": true, "files": files, "bytes": size})),
+            )
+                .into_response()
+        }
+        Ok(Err(e)) => {
+            error!("Не удалось установить снапшот: {:?}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("install failed: {}", e),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            error!("Паника при установке снапшота: {:?}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "join error").into_response()
+        }
+    }
 }
 
 const TELEGRAM_WEB_APP_JS: &str = include_str!("../static/telegram-web-app.js");
@@ -362,6 +518,68 @@ fn render_portal_html(config: &Config, initial_group: &str, groups: &[GroupInfo]
 
 #[cfg(test)]
 mod tests {
+    fn make_snapshot_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut encoder =
+            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        {
+            let mut builder = tar::Builder::new(&mut encoder);
+            for (name, data) in entries {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(data.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                builder.append_data(&mut header, name, *data).unwrap();
+            }
+            builder.finish().unwrap();
+        }
+        encoder.finish().unwrap()
+    }
+
+    #[test]
+    fn install_snapshot_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("snap-ok-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let archive = make_snapshot_archive(&[
+            ("groups.json", b"[{\"name\":\"X\"}]"),
+            ("abc.json", b"{\"a\":1}"),
+        ]);
+        let files = install_snapshot(&dir, &archive).unwrap();
+
+        assert_eq!(files, 2);
+        assert!(dir.join("groups.json").exists());
+        assert!(dir.join("abc.json").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn install_snapshot_ignores_foreign_paths() {
+        let dir = std::env::temp_dir().join(format!("snap-skip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let archive = make_snapshot_archive(&[
+            ("sub/nested.json", b"{}"),
+            (".hidden.json", b"{}"),
+            ("ok.json", b"{}"),
+        ]);
+        let files = install_snapshot(&dir, &archive).unwrap();
+
+        assert_eq!(files, 1, "должен остаться только плоский ok.json");
+        assert!(dir.join("ok.json").exists());
+        assert!(!dir.join("sub").exists());
+        assert!(!dir.join(".hidden.json").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn install_snapshot_rejects_empty_archive() {
+        let dir = std::env::temp_dir().join(format!("snap-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let archive = make_snapshot_archive(&[]);
+        assert!(install_snapshot(&dir, &archive).is_err());
+    }
+
     use super::*;
 
     #[tokio::test]
@@ -384,6 +602,8 @@ mod tests {
             db_path: ":memory:".to_string(),
             timezone: "Europe/Moscow".to_string(),
             alert_minutes_before: 15,
+            snapshot_dir: String::new(),
+            ingest_token: String::new(),
         };
         let db = Database::new(":memory:").unwrap();
         let client = reqwest::Client::new();
@@ -411,6 +631,8 @@ mod tests {
             db_path: ":memory:".to_string(),
             timezone: "Europe/Moscow".to_string(),
             alert_minutes_before: 15,
+            snapshot_dir: String::new(),
+            ingest_token: String::new(),
         };
         let db = Database::new(":memory:").unwrap();
         let client = reqwest::Client::new();
@@ -434,6 +656,8 @@ mod tests {
             db_path: ":memory:".to_string(),
             timezone: "Europe/Moscow".to_string(),
             alert_minutes_before: 15,
+            snapshot_dir: String::new(),
+            ingest_token: String::new(),
         };
         let db = Database::new(":memory:").unwrap();
         let client = reqwest::Client::new();
@@ -461,6 +685,8 @@ mod tests {
             db_path: ":memory:".to_string(),
             timezone: "Europe/Moscow".to_string(),
             alert_minutes_before: 15,
+            snapshot_dir: String::new(),
+            ingest_token: String::new(),
         };
         let db = Database::new(":memory:").unwrap();
         let client = reqwest::Client::new();
@@ -502,6 +728,8 @@ mod tests {
             db_path: ":memory:".to_string(),
             timezone: "Europe/Moscow".to_string(),
             alert_minutes_before: 15,
+            snapshot_dir: String::new(),
+            ingest_token: String::new(),
         };
         let db = Database::new(":memory:").unwrap();
         let client = reqwest::Client::new();

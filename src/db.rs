@@ -6,6 +6,8 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use tracing::info;
+
 use crate::models::{ChangeRecord, GroupInfo, GroupSchedule, User};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -143,6 +145,10 @@ impl Database {
     // --- Управление справочником групп МАИ ---
 
     pub async fn save_groups(&self, groups: &[GroupInfo]) -> Result<()> {
+        // Пустая выгрузка — почти наверняка сбой, а не «все группы исчезли»
+        if groups.is_empty() {
+            anyhow::bail!("пустая выгрузка справочника групп — обновление отменено");
+        }
         let now = current_timestamp();
         let mut conn = self.conn.lock().await;
         let tx = conn.transaction()?;
@@ -176,6 +182,13 @@ impl Database {
                     now
                 ])?;
             }
+        }
+
+        // Справочник МАИ меняется между семестрами: группы, которых в новой выгрузке нет,
+        // остаются с прежним updated_at и удаляются одним запросом.
+        let removed = tx.execute("DELETE FROM mai_groups WHERE updated_at < ?1", params![now])?;
+        if removed > 0 {
+            info!("Из справочника удалено {} устаревших групп", removed);
         }
 
         tx.commit()?;

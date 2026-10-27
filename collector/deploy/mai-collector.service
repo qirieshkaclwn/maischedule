@@ -1,0 +1,22 @@
+[Unit]
+Description=MAI schedule collector (внутри сети МАИ)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.config/mai-collector
+ExecStart=%h/.config/mai-collector/mai-collector
+EnvironmentFile=%h/.config/mai-collector/.env
+Restart=on-failure
+RestartSec=60s
+
+# Сборщику не нужен root: только исходящие соединения
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=%h/.config/mai-collector
+
+[Install]
+WantedBy=default.target

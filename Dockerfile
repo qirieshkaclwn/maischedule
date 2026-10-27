@@ -20,6 +20,8 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs && \
 COPY src/ ./src/
 COPY templates/ ./templates/
 COPY static/ ./static/
+# Корневые сертификаты УЦ Минцифры вкомпилируются в бинарь (include_bytes!)
+COPY certs/ ./certs/
 
 # Обновляем timestamp исходников, чтобы cargo пересобрал бинарник
 RUN touch src/main.rs && cargo build --release
