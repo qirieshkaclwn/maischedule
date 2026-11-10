@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::models::{ChangeRecord, GroupInfo, GroupSchedule, User};
+use crate::models::{ChangeRecord, GroupInfo, GroupSchedule, User, UserGroupNote};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ScheduleServerStatus {
@@ -85,6 +85,18 @@ impl Database {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS user_group_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                group_name TEXT NOT NULL,
+                note_text TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(user_id, group_name)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_user_group_notes_user ON user_group_notes(user_id);
 
             CREATE INDEX IF NOT EXISTS idx_users_group ON users(group_name);
             CREATE INDEX IF NOT EXISTS idx_mai_groups_lower ON mai_groups(name_lower);
@@ -387,6 +399,92 @@ impl Database {
         let conn = self.conn.lock().await;
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))?;
         Ok(count as usize)
+    }
+
+    // --- Заметки групп пользователей ---
+
+    pub async fn get_user_notes(&self, user_id: i64) -> Result<Vec<UserGroupNote>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, group_name, note_text, created_at, updated_at
+             FROM user_group_notes
+             WHERE user_id = ?1
+             ORDER BY id ASC",
+        )?;
+
+        let rows = stmt.query_map(params![user_id], |row| {
+            Ok(UserGroupNote {
+                id: row.get(0)?,
+                user_id: row.get(1)?,
+                group_name: row.get(2)?,
+                note_text: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
+        })?;
+
+        let mut notes = Vec::new();
+        for r in rows {
+            notes.push(r?);
+        }
+        Ok(notes)
+    }
+
+    pub async fn save_user_note(&self, user_id: i64, group_name: &str, note_text: &str) -> Result<UserGroupNote> {
+        let now = current_timestamp();
+        let clean_grp = group_name.trim();
+        let clean_note = note_text.trim();
+        let conn = self.conn.lock().await;
+
+        conn.execute(
+            r#"
+            INSERT INTO user_group_notes (user_id, group_name, note_text, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?4)
+            ON CONFLICT(user_id, group_name) DO UPDATE SET
+                note_text = excluded.note_text,
+                updated_at = excluded.updated_at
+            "#,
+            params![user_id, clean_grp, clean_note, now],
+        )?;
+
+        let (id, c_at, u_at): (i64, String, String) = conn.query_row(
+            "SELECT id, created_at, updated_at FROM user_group_notes WHERE user_id = ?1 AND group_name = ?2",
+            params![user_id, clean_grp],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+
+        Ok(UserGroupNote {
+            id,
+            user_id,
+            group_name: clean_grp.to_string(),
+            note_text: clean_note.to_string(),
+            created_at: c_at,
+            updated_at: u_at,
+        })
+    }
+
+    pub async fn delete_user_note(&self, user_id: i64, group_name: &str) -> Result<bool> {
+        let clean_grp = group_name.trim();
+        let conn = self.conn.lock().await;
+        let affected = conn.execute(
+            "DELETE FROM user_group_notes WHERE user_id = ?1 AND group_name = ?2",
+            params![user_id, clean_grp],
+        )?;
+        Ok(affected > 0)
+    }
+
+    #[allow(dead_code)]
+    pub async fn has_user_note(&self, user_id: i64, group_name: &str) -> Result<bool> {
+        let clean_grp = group_name.trim();
+        let conn = self.conn.lock().await;
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM user_group_notes WHERE user_id = ?1 AND group_name = ?2 LIMIT 1",
+                params![user_id, clean_grp],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        Ok(exists)
     }
 
     // --- Legacy методы для совместимости ---
@@ -918,6 +1016,50 @@ mod tests {
         assert!(subs.contains(&999));
 
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[tokio::test]
+    async fn test_db_user_group_notes() {
+        let db = Database::new(":memory:").expect("Failed to create in-memory db");
+        let user_id = 12345;
+
+        // Изначально заметок нет
+        assert_eq!(db.get_user_notes(user_id).await.unwrap().len(), 0);
+        assert!(!db.has_user_note(user_id, "М3О-309БВ-24").await.unwrap());
+
+        // Добавляем первую заметку
+        let note = db
+            .save_user_note(user_id, "М3О-309БВ-24", "Основная группа")
+            .await
+            .unwrap();
+        assert_eq!(note.group_name, "М3О-309БВ-24");
+        assert_eq!(note.note_text, "Основная группа");
+        assert!(db.has_user_note(user_id, "М3О-309БВ-24").await.unwrap());
+
+        // Добавляем вторую заметку
+        db.save_user_note(user_id, "М3О-307БВ-24", "Английский")
+            .await
+            .unwrap();
+        let notes = db.get_user_notes(user_id).await.unwrap();
+        assert_eq!(notes.len(), 2);
+
+        // Обновляем текст существующей заметки
+        let updated = db
+            .save_user_note(user_id, "М3О-309БВ-24", "Моя группа")
+            .await
+            .unwrap();
+        assert_eq!(updated.note_text, "Моя группа");
+        let notes_after = db.get_user_notes(user_id).await.unwrap();
+        assert_eq!(notes_after.len(), 2);
+        assert_eq!(notes_after[0].note_text, "Моя группа");
+
+        // Удаляем одну заметку
+        let deleted = db.delete_user_note(user_id, "М3О-309БВ-24").await.unwrap();
+        assert!(deleted);
+        assert!(!db.has_user_note(user_id, "М3О-309БВ-24").await.unwrap());
+        let notes_final = db.get_user_notes(user_id).await.unwrap();
+        assert_eq!(notes_final.len(), 1);
+        assert_eq!(notes_final[0].group_name, "М3О-307БВ-24");
     }
 }
 

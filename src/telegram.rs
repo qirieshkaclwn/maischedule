@@ -114,6 +114,7 @@ impl TelegramBot {
                 { "command": "today", "description": "Расписание на сегодня" },
                 { "command": "tomorrow", "description": "Расписание на завтра" },
                 { "command": "week", "description": "Расписание на текущую неделю" },
+                { "command": "notes", "description": "Заметки сохраненных групп" },
                 { "command": "link", "description": "Ссылки для календаря iOS и Webcal" },
                 { "command": "notifications", "description": "Включить/выключить уведомления" },
                 { "command": "changes", "description": "История последних изменений" },
@@ -336,6 +337,7 @@ pub fn main_keyboard(
         ],
         vec![
             json!({ "text": "Расписание на неделю", "callback_data": "btn_week" }),
+            json!({ "text": "Заметки групп", "callback_data": "btn_notes" }),
         ],
         vec![
             json!({ "text": "Добавить в Календарь iPhone", "url": subscribe_url }),
@@ -456,7 +458,10 @@ pub async fn handle_incoming_text(
             "/link" => handle_link(chat_id, ctx).await,
             "/today" => handle_today(chat_id, ctx).await,
             "/tomorrow" => handle_tomorrow(chat_id, ctx).await,
-            "/week" => handle_week(chat_id, ctx).await,
+            "/week" => handle_week_with_args(chat_id, args, ctx).await,
+            "/notes" => handle_notes(chat_id, ctx).await,
+            "/note" => handle_note_command(chat_id, args, ctx).await,
+            "/delnote" => handle_delnote_command(chat_id, args, ctx).await,
             "/group" => handle_group_command(chat_id, args, username, first_name, ctx).await,
             "/notifications" => handle_toggle_notifications(chat_id, ctx).await,
             "/changes" => handle_changes(chat_id, ctx).await,
@@ -525,7 +530,10 @@ async fn handle_help(chat_id: i64, ctx: &BotContext<'_>) -> Result<()> {
         /group &lt;название&gt; - Выбрать или сменить учебную группу\n\
         /today - Расписание на сегодня\n\
         /tomorrow - Расписание на завтра\n\
-        /week - Расписание на текущую учебную неделю (Пн-Сб)\n\
+        /week [номер] - Расписание на неделю (с выбором недель)\n\
+        /notes - Заметки сохраненных групп\n\
+        /note &lt;группа&gt; [комментарий] - Добавить группу в заметки\n\
+        /delnote &lt;группа&gt; - Удалить группу из заметок\n\
         /link - Ссылки Webcal и HTTPS для календаря\n\
         /notifications - Включить или выключить уведомления об изменениях\n\
         /changes - История последних изменений в расписании\n\
@@ -625,10 +633,16 @@ async fn handle_group_search_or_set(
         // Несколько совпадений - предлагаем интерактивный выбор кнопками
         let mut buttons = Vec::new();
         for g in matches {
-            buttons.push(vec![json!({
-                "text": format!("{} (курс {})", g.name, g.course),
-                "callback_data": format!("set_grp:{}", g.name)
-            })]);
+            buttons.push(vec![
+                json!({
+                    "text": format!("{} (курс {})", g.name, g.course),
+                    "callback_data": format!("set_grp:{}", g.name)
+                }),
+                json!({
+                    "text": "В заметки",
+                    "callback_data": format!("add_note:{}", g.name)
+                }),
+            ]);
         }
 
         let keyboard = json!({ "inline_keyboard": buttons });
@@ -798,22 +812,82 @@ async fn handle_tomorrow(chat_id: i64, ctx: &BotContext<'_>) -> Result<()> {
 }
 
 async fn handle_week(chat_id: i64, ctx: &BotContext<'_>) -> Result<()> {
+    handle_week_offset(chat_id, 0, ctx).await
+}
+
+async fn handle_week_with_args(chat_id: i64, args: &str, ctx: &BotContext<'_>) -> Result<()> {
+    let clean = args.trim();
+    let offset = if clean.is_empty() {
+        0
+    } else if let Ok(num) = clean.parse::<i64>() {
+        let today = Local::now().date_naive();
+        let cur_week = calculate_semester_week(today);
+        num - cur_week
+    } else if clean == "next" || clean == "след" || clean == "+1" {
+        1
+    } else if clean == "prev" || clean == "пред" || clean == "-1" {
+        -1
+    } else {
+        0
+    };
+    handle_week_offset(chat_id, offset, ctx).await
+}
+
+fn calculate_semester_week(date: NaiveDate) -> i64 {
+    let year = date.year();
+    let month = date.month();
+    let sem_start = if month >= 8 {
+        NaiveDate::from_ymd_opt(year, 9, 1).unwrap_or(date)
+    } else {
+        NaiveDate::from_ymd_opt(year, 2, 9).unwrap_or(date)
+    };
+    let sem_start_weekday = sem_start.weekday().num_days_from_monday();
+    let sem_start_monday = sem_start - chrono::Duration::days(sem_start_weekday as i64);
+
+    let days = (date - sem_start_monday).num_days();
+    if days < 0 {
+        1
+    } else {
+        (days / 7) + 1
+    }
+}
+
+async fn handle_week_offset(chat_id: i64, week_offset: i64, ctx: &BotContext<'_>) -> Result<()> {
     let Some(user_group) = require_user_group(chat_id, ctx).await? else {
         return Ok(());
     };
 
     let today = Local::now().date_naive();
     let weekday_num = today.weekday().num_days_from_monday();
-    let monday = today - chrono::Duration::days(weekday_num as i64);
+    let base_monday = today - chrono::Duration::days(weekday_num as i64);
+    let target_monday = base_monday + chrono::Duration::weeks(week_offset);
+    let target_sunday = target_monday + chrono::Duration::days(6);
+    let week_num = calculate_semester_week(target_monday);
 
     match get_or_load_schedule(&user_group, ctx.db, ctx.client).await {
         Ok(sched) => {
+            let offset_label = if week_offset == 0 {
+                "текущая неделя".to_string()
+            } else if week_offset == 1 {
+                "следующая неделя".to_string()
+            } else if week_offset == -1 {
+                "предыдущая неделя".to_string()
+            } else if week_offset > 1 {
+                format!("через {} нед.", week_offset)
+            } else {
+                format!("{} нед. назад", -week_offset)
+            };
+
             let mut blocks = vec![format!(
-                "<b>Расписание на неделю ({}):</b>\n",
-                escape_html(&user_group)
+                "<b>Расписание на неделю: {} (Неделя {})</b>\nПериод: {} — {} ({})\n",
+                escape_html(&user_group),
+                week_num,
+                target_monday.format("%d.%m"),
+                target_sunday.format("%d.%m"),
+                offset_label
             )];
             for i in 0..6 {
-                let d = monday + chrono::Duration::days(i);
+                let d = target_monday + chrono::Duration::days(i);
                 if let Some(ds) = sched.get_day(&d) {
                     if !ds.lessons.is_empty() {
                         blocks.push(format_day_schedule(Some(ds), &d));
@@ -824,13 +898,215 @@ async fn handle_week(chat_id: i64, ctx: &BotContext<'_>) -> Result<()> {
             if blocks.len() == 1 {
                 blocks.push("Занятий на этой неделе не найдено.".to_string());
             }
-            ctx.bot.send_message(chat_id, &blocks.join("\n\n"), None).await
+
+            let prev_offset = week_offset - 1;
+            let next_offset = week_offset + 1;
+            let keyboard = json!({
+                "inline_keyboard": [
+                    [
+                        { "text": "« Пред. неделя", "callback_data": format!("cb_week:{}", prev_offset) },
+                        { "text": "Текущая", "callback_data": "cb_week:0" },
+                        { "text": "След. неделя »", "callback_data": format!("cb_week:{}", next_offset) }
+                    ]
+                ]
+            });
+
+            ctx.bot.send_message(chat_id, &blocks.join("\n\n"), Some(keyboard)).await
         }
         Err(e) => {
             ctx.bot
                 .send_message(
                     chat_id,
                     &format!("Ошибка: {}", escape_html(&e.to_string())),
+                    None,
+                )
+                .await
+        }
+    }
+}
+
+async fn handle_notes(chat_id: i64, ctx: &BotContext<'_>) -> Result<()> {
+    let notes = ctx.db.get_user_notes(chat_id).await?;
+    if notes.is_empty() {
+        let text = "<b>Заметки сохраненных групп:</b>\n\n\
+            У вас пока нет сохраненных групп в заметках.\n\n\
+            <b>Как добавить:</b>\n\
+            • Командой: <code>/note М14О-101БВ-26 [комментарий]</code>\n\
+            • В Mini App через кнопку «В заметки»\n\
+            • Или при поиске группы кнопкой «В заметки»";
+        return ctx.bot.send_message(chat_id, text, None).await;
+    }
+
+    let mut text = "<b>Заметки сохраненных групп:</b>\n\n".to_string();
+    let mut keyboard_rows = Vec::new();
+
+    for (idx, note) in notes.iter().enumerate() {
+        let note_desc = if note.note_text.is_empty() {
+            String::new()
+        } else {
+            format!(" — <i>{}</i>", escape_html(&note.note_text))
+        };
+        text.push_str(&format!("{}. <b>{}</b>{}\n", idx + 1, escape_html(&note.group_name), note_desc));
+
+        keyboard_rows.push(vec![
+            json!({
+                "text": format!("Расписание {}", note.group_name),
+                "callback_data": format!("view_grp:{}", note.group_name)
+            }),
+            json!({
+                "text": "Удалить",
+                "callback_data": format!("del_note:{}", note.group_name)
+            }),
+        ]);
+    }
+
+    text.push_str("\nНажмите на группу, чтобы посмотреть расписание, или откройте Mini App.");
+
+    let keyboard = json!({ "inline_keyboard": keyboard_rows });
+    ctx.bot.send_message(chat_id, &text, Some(keyboard)).await
+}
+
+async fn handle_note_command(chat_id: i64, args: &str, ctx: &BotContext<'_>) -> Result<()> {
+    let trimmed = args.trim();
+    if trimmed.is_empty() {
+        let text = "<b>Добавление группы в заметки:</b>\n\n\
+            Использование: <code>/note &lt;название группы&gt; [комментарий]</code>\n\
+            Пример: <code>/note М3О-307БВ-24 Английский язык</code>\n\n\
+            Список заметок: /notes";
+        return ctx.bot.send_message(chat_id, text, None).await;
+    }
+
+    let mut parts = trimmed.splitn(2, char::is_whitespace);
+    let group_query = parts.next().unwrap_or("");
+    let note_text = parts.next().unwrap_or("").trim();
+
+    let matched_group = match ctx.db.find_group_exact_or_ci(group_query).await? {
+        Some(g) => g,
+        None => {
+            let search_results = ctx.db.search_groups(group_query, 5).await?;
+            if search_results.is_empty() {
+                let text = format!("Группа «{}» не найдена в справочнике МАИ.", escape_html(group_query));
+                return ctx.bot.send_message(chat_id, &text, None).await;
+            } else if search_results.len() == 1 {
+                search_results[0].name.clone()
+            } else {
+                let mut buttons = Vec::new();
+                for g in search_results {
+                    buttons.push(vec![json!({
+                        "text": format!("В заметки: {}", g.name),
+                        "callback_data": format!("add_note:{}", g.name)
+                    })]);
+                }
+                let text = format!("По запросу «{}» найдено несколько групп. Выберите нужную:", escape_html(group_query));
+                return ctx.bot.send_message(chat_id, &text, Some(json!({ "inline_keyboard": buttons }))).await;
+            }
+        }
+    };
+
+    ctx.db.save_user_note(chat_id, &matched_group, note_text).await?;
+
+    let comment_str = if note_text.is_empty() {
+        String::new()
+    } else {
+        format!(" с заметкой: <i>«{}»</i>", escape_html(note_text))
+    };
+
+    let text = format!(
+        "Группа <b>{}</b> успешно сохранена в ваши заметки{}!\n\nПосмотреть все заметки: /notes",
+        escape_html(&matched_group),
+        comment_str
+    );
+
+    let keyboard = json!({
+        "inline_keyboard": [
+            [
+                { "text": format!("Расписание {}", matched_group), "callback_data": format!("view_grp:{}", matched_group) },
+                { "text": "Все заметки", "callback_data": "btn_notes" }
+            ]
+        ]
+    });
+
+    ctx.bot.send_message(chat_id, &text, Some(keyboard)).await
+}
+
+async fn handle_delnote_command(chat_id: i64, args: &str, ctx: &BotContext<'_>) -> Result<()> {
+    let clean_grp = args.trim();
+    if clean_grp.is_empty() {
+        let text = "Использование: <code>/delnote &lt;название группы&gt;</code>\nПример: <code>/delnote М3О-307БВ-24</code>";
+        return ctx.bot.send_message(chat_id, text, None).await;
+    }
+
+    let deleted = ctx.db.delete_user_note(chat_id, clean_grp).await?;
+    if deleted {
+        let text = format!("Группа <b>{}</b> удалена из ваших заметок.", escape_html(clean_grp));
+        ctx.bot.send_message(chat_id, &text, None).await
+    } else {
+        let text = format!("Группы <b>{}</b> не было в ваших заметках. Список заметок: /notes", escape_html(clean_grp));
+        ctx.bot.send_message(chat_id, &text, None).await
+    }
+}
+
+async fn handle_add_note_callback(chat_id: i64, group_name: &str, ctx: &BotContext<'_>) -> Result<()> {
+    ctx.db.save_user_note(chat_id, group_name, "").await?;
+    let text = format!("Группа <b>{}</b> добавлена в заметки!\n\nСписок заметок: /notes", escape_html(group_name));
+    let keyboard = json!({
+        "inline_keyboard": [
+            [
+                { "text": format!("Расписание {}", group_name), "callback_data": format!("view_grp:{}", group_name) },
+                { "text": "Все заметки", "callback_data": "btn_notes" }
+            ]
+        ]
+    });
+    ctx.bot.send_message(chat_id, &text, Some(keyboard)).await
+}
+
+async fn handle_del_note_callback(chat_id: i64, group_name: &str, ctx: &BotContext<'_>) -> Result<()> {
+    ctx.db.delete_user_note(chat_id, group_name).await?;
+    handle_notes(chat_id, ctx).await
+}
+
+async fn handle_view_group_schedule(chat_id: i64, group_name: &str, ctx: &BotContext<'_>) -> Result<()> {
+    let today = Local::now().date_naive();
+    match get_or_load_schedule(group_name, ctx.db, ctx.client).await {
+        Ok(sched) => {
+            let day = sched.get_day(&today);
+            let sched_text = format_day_schedule(day, &today);
+            let app_url = get_app_url(ctx.config, Some(group_name));
+
+            let text = format!(
+                "<b>Группа {}:</b>\n\n{}",
+                escape_html(group_name),
+                sched_text
+            );
+
+            let app_btn = if app_url.starts_with("https://") {
+                json!({
+                    "text": "Открыть в Mini App",
+                    "web_app": { "url": app_url }
+                })
+            } else {
+                json!({
+                    "text": "Открыть в Mini App",
+                    "url": app_url
+                })
+            };
+
+            let keyboard = json!({
+                "inline_keyboard": [
+                    [app_btn],
+                    [
+                        { "text": "Все заметки", "callback_data": "btn_notes" }
+                    ]
+                ]
+            });
+
+            ctx.bot.send_message(chat_id, &text, Some(keyboard)).await
+        }
+        Err(e) => {
+            ctx.bot
+                .send_message(
+                    chat_id,
+                    &format!("Ошибка получения расписания: {}", escape_html(&e.to_string())),
                     None,
                 )
                 .await
@@ -1040,11 +1316,21 @@ pub async fn run_polling(
                                 if let Some(ref data) = cb.data {
                                     let res = if let Some(grp) = data.strip_prefix("set_grp:") {
                                         apply_user_group(chat_id, grp, uname, fname, &ctx).await
+                                    } else if let Some(grp) = data.strip_prefix("add_note:") {
+                                        handle_add_note_callback(chat_id, grp, &ctx).await
+                                    } else if let Some(grp) = data.strip_prefix("del_note:") {
+                                        handle_del_note_callback(chat_id, grp, &ctx).await
+                                    } else if let Some(grp) = data.strip_prefix("view_grp:") {
+                                        handle_view_group_schedule(chat_id, grp, &ctx).await
+                                    } else if let Some(offset_str) = data.strip_prefix("cb_week:") {
+                                        let offset = offset_str.parse::<i64>().unwrap_or(0);
+                                        handle_week_offset(chat_id, offset, &ctx).await
                                     } else {
                                         match data.as_str() {
                                             "btn_today" => handle_today(chat_id, &ctx).await,
                                             "btn_tomorrow" => handle_tomorrow(chat_id, &ctx).await,
                                             "btn_week" => handle_week(chat_id, &ctx).await,
+                                            "btn_notes" => handle_notes(chat_id, &ctx).await,
                                             "btn_app" => handle_app(chat_id, &ctx).await,
                                             "btn_link" => handle_link(chat_id, &ctx).await,
                                             "btn_check" => handle_check(chat_id, &ctx).await,

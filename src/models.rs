@@ -34,6 +34,16 @@ pub struct ChangeRecord {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UserGroupNote {
+    pub id: i64,
+    pub user_id: i64,
+    pub group_name: String,
+    pub note_text: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

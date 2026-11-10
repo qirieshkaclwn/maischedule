@@ -40,8 +40,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/groups", get(groups_handler))
         .route("/api/schedule/:group", get(schedule_json_handler))
         .route("/api/user/:id", get(user_info_handler))
+        .route("/api/user/:id/notes", get(get_user_notes_handler))
         .route("/api/user/group", post(set_user_group_handler))
         .route("/api/user/notifications", post(toggle_user_notifications_handler))
+        .route("/api/user/notes", post(save_user_note_handler))
+        .route("/api/user/notes/delete", post(delete_user_note_handler))
         .route("/calendar/:group", get(calendar_handler))
         .route("/webcal/:group", get(calendar_handler))
         .route("/subscribe/:group", get(subscribe_handler))
@@ -336,6 +339,81 @@ async fn toggle_user_notifications_handler(
     }
 }
 
+#[derive(serde::Deserialize)]
+pub struct SaveUserNotePayload {
+    pub user_id: i64,
+    pub group_name: String,
+    #[serde(default)]
+    pub note_text: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct DeleteUserNotePayload {
+    pub user_id: i64,
+    pub group_name: String,
+}
+
+async fn get_user_notes_handler(
+    AxumPath(user_id): AxumPath<i64>,
+    State(state): State<AppState>,
+) -> Response {
+    match state.db.get_user_notes(user_id).await {
+        Ok(notes) => Json(notes).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Ошибка получения заметок: {}", e),
+        )
+            .into_response(),
+    }
+}
+
+async fn save_user_note_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<SaveUserNotePayload>,
+) -> Response {
+    let clean_grp = payload.group_name.trim();
+    if clean_grp.is_empty() {
+        return (StatusCode::BAD_REQUEST, "Имя группы не может быть пустым").into_response();
+    }
+
+    match state
+        .db
+        .save_user_note(payload.user_id, clean_grp, &payload.note_text)
+        .await
+    {
+        Ok(note) => (StatusCode::OK, Json(note)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Ошибка сохранения заметки: {}", e),
+        )
+            .into_response(),
+    }
+}
+
+async fn delete_user_note_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<DeleteUserNotePayload>,
+) -> Response {
+    let clean_grp = payload.group_name.trim();
+    if clean_grp.is_empty() {
+        return (StatusCode::BAD_REQUEST, "Имя группы не может быть пустым").into_response();
+    }
+
+    match state.db.delete_user_note(payload.user_id, clean_grp).await {
+        Ok(deleted) => Json(json!({
+            "status": "ok",
+            "deleted": deleted,
+            "group_name": clean_grp,
+        }))
+        .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Ошибка удаления заметки: {}", e),
+        )
+            .into_response(),
+    }
+}
+
 const PORTAL_TEMPLATE: &str = include_str!("../templates/portal.html");
 
 fn render_portal_html(config: &Config, initial_group: &str, groups: &[GroupInfo]) -> String {
@@ -486,6 +564,27 @@ mod tests {
             Json(ToggleNotificationsPayload { user_id: 12345 }),
         ).await;
         assert_eq!(notif_res.status(), StatusCode::OK);
+
+        // 4. Save note
+        let note_payload = SaveUserNotePayload {
+            user_id: 12345,
+            group_name: "М3О-309БВ-24".to_string(),
+            note_text: "Тестовая заметка".to_string(),
+        };
+        let save_res = save_user_note_handler(State(state.clone()), Json(note_payload)).await;
+        assert_eq!(save_res.status(), StatusCode::OK);
+
+        // 5. Get notes
+        let notes_res = get_user_notes_handler(AxumPath(12345), State(state.clone())).await;
+        assert_eq!(notes_res.status(), StatusCode::OK);
+
+        // 6. Delete note
+        let del_payload = DeleteUserNotePayload {
+            user_id: 12345,
+            group_name: "М3О-309БВ-24".to_string(),
+        };
+        let del_res = delete_user_note_handler(State(state.clone()), Json(del_payload)).await;
+        assert_eq!(del_res.status(), StatusCode::OK);
     }
 
     #[tokio::test]

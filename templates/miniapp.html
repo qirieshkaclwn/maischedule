@@ -200,32 +200,127 @@
             box-shadow: 0 2px 6px rgba(0, 122, 255, 0.25);
         }
 
-        /* Days horizontal strip (for week navigation) */
-        .days-strip {
+        /* Week Selector Bar */
+        .week-bar {
             display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
             gap: 6px;
-            overflow-x: auto;
-            padding-bottom: 10px;
+        }
+
+        .week-arrow-btn {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 9px;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: var(--text-color);
+            transition: all 0.15s ease;
+            flex-shrink: 0;
+            padding: 0;
+        }
+
+        .week-arrow-btn:active {
+            background: rgba(0, 0, 0, 0.05);
+            transform: scale(0.95);
+        }
+
+        .week-info {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 9px;
+            padding: 6px 10px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .week-info:active {
+            background: rgba(0, 0, 0, 0.03);
+        }
+
+        .week-label {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text-color);
+        }
+
+        .week-dates {
+            font-size: 12px;
+            color: var(--hint-color);
+        }
+
+        .week-chevron {
+            opacity: 0.5;
+            width: 12px;
+            height: 12px;
+        }
+
+        /* 7-day sliding window container */
+        .sliding-strip-container {
+            display: flex;
+            align-items: center;
+            gap: 4px;
             margin-bottom: 12px;
+        }
+
+        .strip-arrow-btn {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 11px;
+            width: 26px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: var(--hint-color);
+            transition: all 0.15s ease;
+            flex-shrink: 0;
+            padding: 0;
+        }
+
+        .strip-arrow-btn:active {
+            background: rgba(0, 0, 0, 0.05);
+            transform: scale(0.95);
+        }
+
+        .days-strip {
+            flex: 1;
+            display: flex;
+            gap: 4px;
+            overflow: hidden;
             scrollbar-width: none;
+            touch-action: pan-y;
         }
         .days-strip::-webkit-scrollbar {
             display: none;
         }
 
         .day-chip {
-            flex: 0 0 auto;
+            flex: 1 1 0;
+            min-width: 0;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            width: 48px;
             height: 56px;
             background: var(--card-bg);
             border: 1px solid var(--border-color);
-            border-radius: 12px;
+            border-radius: 11px;
             cursor: pointer;
             transition: all 0.15s ease;
+            padding: 2px;
+            position: relative;
         }
 
         .day-chip .day-name {
@@ -236,9 +331,19 @@
         }
 
         .day-chip .day-num {
-            font-size: 16px;
+            font-size: 15px;
             font-weight: 700;
             margin-top: 2px;
+        }
+
+        .day-chip.is-today::after {
+            content: '';
+            position: absolute;
+            bottom: 4px;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: var(--accent-color);
         }
 
         .day-chip.active {
@@ -248,7 +353,138 @@
         }
 
         .day-chip.active .day-name {
-            color: rgba(255, 255, 255, 0.8);
+            color: rgba(255, 255, 255, 0.85);
+        }
+
+        .day-chip.active.is-today::after {
+            background: #ffffff;
+        }
+
+        /* Top Bar Notes elements */
+        .icon-round-btn {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: var(--hint-color);
+            transition: all 0.15s ease;
+            flex-shrink: 0;
+            padding: 0;
+        }
+
+        .icon-round-btn.active-note {
+            color: #ff9500;
+            border-color: rgba(255, 149, 0, 0.4);
+            background: rgba(255, 149, 0, 0.1);
+        }
+
+        .icon-round-btn.active-note svg {
+            fill: #ff9500;
+            opacity: 1;
+        }
+
+        .notes-chip {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 6px 9px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-color);
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            flex-shrink: 0;
+        }
+
+        .badge-count {
+            background: var(--accent-color);
+            color: var(--accent-text);
+            font-size: 10px;
+            font-weight: 700;
+            padding: 1px 5px;
+            border-radius: 8px;
+            min-width: 12px;
+            text-align: center;
+        }
+
+        /* Notes inside Drawers */
+        .note-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .note-info {
+            flex: 1;
+            cursor: pointer;
+        }
+
+        .note-group-name {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-color);
+        }
+
+        .note-text-label {
+            font-size: 12px;
+            color: var(--hint-color);
+            margin-top: 2px;
+        }
+
+        .note-actions {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .note-icon-btn {
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            padding: 6px;
+            color: var(--hint-color);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .note-icon-btn:hover {
+            color: var(--text-color);
+            background: rgba(0,0,0,0.05);
+        }
+
+        .drawer-note-pill {
+            flex: 0 0 auto;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 6px 12px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-color);
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .drawer-note-pill.active {
+            background: var(--accent-color);
+            color: var(--accent-text);
+            border-color: var(--accent-color);
         }
 
         /* Section Header */
@@ -589,9 +825,18 @@
                     <span id="warning-badge-label">Сбой API</span>
                 </button>
             </div>
-            <div id="group-chip" class="group-chip" onclick="openGroupDrawer()">
-                <span id="current-group-label">__DEFAULT_GROUP__</span>
-                <svg class="icon-svg" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
+            <div style="display: flex; align-items: center; gap: 6px;">
+                <button id="btn-toggle-note" class="icon-round-btn" onclick="toggleCurrentGroupNote()" title="Добавить в заметки">
+                    <svg class="icon-svg" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+                </button>
+                <button class="notes-chip" onclick="openNotesDrawer()" title="Заметки групп">
+                    <span>Заметки</span>
+                    <span id="notes-badge-count" class="badge-count" style="display: none;">0</span>
+                </button>
+                <div id="group-chip" class="group-chip" onclick="openGroupDrawer()">
+                    <span id="current-group-label">__DEFAULT_GROUP__</span>
+                    <svg class="icon-svg" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
+                </div>
             </div>
         </div>
 
@@ -602,8 +847,31 @@
             <button id="tab-week" class="tab-btn" onclick="switchTab('week')">Вся неделя</button>
         </div>
 
-        <!-- Day selector chips for current week -->
-        <div id="days-strip" class="days-strip"></div>
+        <!-- Week Navigation Bar -->
+        <div class="week-bar">
+            <button class="week-arrow-btn" onclick="shiftWeek(-1)" title="Предыдущая неделя">
+                <svg class="icon-svg" viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+            </button>
+            <div class="week-info" onclick="openWeekPicker()">
+                <span id="current-week-label" class="week-label">Неделя ...</span>
+                <span id="current-week-dates" class="week-dates">...</span>
+                <svg class="icon-svg week-chevron" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
+            </div>
+            <button class="week-arrow-btn" onclick="shiftWeek(1)" title="Следующая неделя">
+                <svg class="icon-svg" viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+            </button>
+        </div>
+
+        <!-- 7-day sliding window container -->
+        <div class="sliding-strip-container">
+            <button class="strip-arrow-btn" onclick="slideDays(-1)" title="Предыдущий день">
+                <svg class="icon-svg" viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+            </button>
+            <div id="days-strip" class="days-strip"></div>
+            <button class="strip-arrow-btn" onclick="slideDays(1)" title="Следующий день">
+                <svg class="icon-svg" viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+            </button>
+        </div>
 
         <!-- Header for current view -->
         <div class="section-header">
@@ -639,6 +907,10 @@
     <div id="group-drawer" class="drawer">
         <div class="drawer-handle"></div>
         <div class="drawer-title">Выбор учебной группы</div>
+        <div id="drawer-notes-section" style="display: none; margin-bottom: 12px;">
+            <div style="font-size: 11px; font-weight: 700; color: var(--hint-color); text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.5px;">Заметки групп</div>
+            <div id="drawer-notes-chips" style="display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none;"></div>
+        </div>
         <div class="search-box">
             <input
                 id="group-search-input"
@@ -650,6 +922,53 @@
             >
         </div>
         <div id="drawer-groups-list" class="groups-list"></div>
+    </div>
+
+    <!-- Drawer: Notes Modal -->
+    <div id="notes-overlay" class="drawer-overlay" onclick="closeNotesDrawer()"></div>
+    <div id="notes-drawer" class="drawer">
+        <div class="drawer-handle"></div>
+        <div class="drawer-title">Заметки групп</div>
+        <div style="font-size: 13px; color: var(--hint-color); margin-bottom: 12px; text-align: center;">
+            Сохраненные группы для быстрого переключения
+        </div>
+        <div id="notes-items-list" style="overflow-y: auto; max-height: 300px; margin-bottom: 12px;"></div>
+        <button class="btn-secondary" onclick="closeNotesDrawer(); openGroupDrawer();" style="width: 100%;">
+            + Добавить группу из списка
+        </button>
+    </div>
+
+    <!-- Drawer: Note Edit Modal -->
+    <div id="note-edit-overlay" class="drawer-overlay" onclick="closeNoteEditDrawer()"></div>
+    <div id="note-edit-drawer" class="drawer">
+        <div class="drawer-handle"></div>
+        <div id="note-edit-title" class="drawer-title">Заметка к группе</div>
+        <div style="margin-bottom: 14px;">
+            <input
+                id="note-text-input"
+                type="text"
+                class="search-input"
+                placeholder="Комментарий (например: Английский или Группа друга)..."
+                maxlength="60"
+                autocomplete="off"
+            >
+        </div>
+        <div style="display: flex; gap: 8px;">
+            <button id="note-save-btn" class="btn-primary" onclick="saveNoteFromDrawer()" style="flex: 1;">
+                Сохранить
+            </button>
+            <button id="note-delete-btn" class="btn-secondary" onclick="deleteNoteFromDrawer()" style="flex: 1; color: #ff3b30; border-color: rgba(255, 59, 48, 0.3);">
+                Удалить
+            </button>
+        </div>
+    </div>
+
+    <!-- Drawer: Week Picker Modal -->
+    <div id="week-overlay" class="drawer-overlay" onclick="closeWeekPicker()"></div>
+    <div id="week-picker-drawer" class="drawer">
+        <div class="drawer-handle"></div>
+        <div class="drawer-title">Выбор учебной недели</div>
+        <div id="week-picker-list" class="groups-list" style="max-height: 340px;"></div>
     </div>
 
     <!-- Server Warning Modal -->
@@ -701,6 +1020,11 @@
         let tgUser = null;
         let notifEnabled = true;
 
+        // Sliding window and user notes state
+        let currentSlidingDate = getMonday(new Date());
+        let userNotes = [];
+        let editingGroup = null;
+
         const tg = window.Telegram?.WebApp;
         if (tg) {
             tg.ready();
@@ -724,10 +1048,14 @@
             }
 
             updateGroupUi();
+            loadNotes();
+            updateWeekBar();
             loadFromLocalCache();
             loadSchedule();
 
             syncUserData(hasQueryGroup);
+            syncNotesWithBackend();
+            setupSwipeListeners();
             setTimeout(loadAllGroups, 1800);
         }
 
@@ -745,6 +1073,7 @@
                         if (!hasQueryGroup && uData.group_name && uData.group_name !== currentGroup) {
                             currentGroup = uData.group_name;
                             updateGroupUi();
+                            updateNotesUi();
                             loadFromLocalCache();
                             loadSchedule();
                         }
@@ -994,6 +1323,196 @@
             return `${d.getDate()} ${months[d.getMonth()]}, ${days[d.getDay()]}`;
         }
 
+        // Date and week calculations
+        function getMonday(d) {
+            const date = new Date(d);
+            const day = date.getDay();
+            const diff = day === 0 ? -6 : 1 - day;
+            date.setDate(date.getDate() + diff);
+            date.setHours(0, 0, 0, 0);
+            return date;
+        }
+
+        function getSemesterStart(d) {
+            const year = d.getFullYear();
+            const month = d.getMonth() + 1; // 1-12
+            if (month >= 9) {
+                return new Date(year, 8, 1);
+            } else if (month === 1) {
+                return new Date(year - 1, 8, 1);
+            } else {
+                return new Date(year, 1, 9);
+            }
+        }
+
+        function getWeekNumber(d) {
+            const semStart = getSemesterStart(d);
+            const semMonday = getMonday(semStart);
+            const targetMonday = getMonday(d);
+            const diffDays = Math.round((targetMonday.getTime() - semMonday.getTime()) / (1000 * 3600 * 24));
+            const week = Math.floor(diffDays / 7) + 1;
+            return week > 0 ? week : 1;
+        }
+
+        function formatShortDateRange(startDate, endDate) {
+            const months = ["янв.", "фев.", "мар.", "апр.", "мая", "июн.", "июл.", "авг.", "сен.", "окт.", "нояб.", "дек."];
+            return `${startDate.getDate()} ${months[startDate.getMonth()]} — ${endDate.getDate()} ${months[endDate.getMonth()]}`;
+        }
+
+        function updateWeekBar() {
+            const weekNum = getWeekNumber(currentSlidingDate);
+            const labelEl = document.getElementById("current-week-label");
+            const datesEl = document.getElementById("current-week-dates");
+            if (labelEl) labelEl.textContent = `Неделя ${weekNum}`;
+            if (datesEl) {
+                const endDate = new Date(currentSlidingDate);
+                endDate.setDate(endDate.getDate() + 6);
+                datesEl.textContent = formatShortDateRange(currentSlidingDate, endDate);
+            }
+        }
+
+        // Sliding window & week navigation
+        function slideDays(delta) {
+            hapticLight();
+            currentSlidingDate.setDate(currentSlidingDate.getDate() + delta);
+            updateWeekBar();
+            renderWeekStrip();
+            if (activeTab === "week") {
+                renderFullWeek();
+            }
+        }
+
+        function shiftWeek(deltaWeeks) {
+            hapticLight();
+            currentSlidingDate.setDate(currentSlidingDate.getDate() + (deltaWeeks * 7));
+            updateWeekBar();
+            renderWeekStrip();
+            if (activeTab === "week") {
+                renderFullWeek();
+            }
+        }
+
+        function stepDay(delta) {
+            hapticLight();
+            const curIso = selectedDateStr || (activeTab === "tomorrow" ? getIsoDate(new Date(Date.now() + 86400000)) : getIsoDate(new Date()));
+            const parts = curIso.split("-");
+            const d = new Date(parts[0], parts[1] - 1, parts[2]);
+            d.setDate(d.getDate() + delta);
+            const newIso = getIsoDate(d);
+
+            const minD = new Date(currentSlidingDate);
+            const maxD = new Date(currentSlidingDate);
+            maxD.setDate(maxD.getDate() + 6);
+            if (d < minD || d > maxD) {
+                currentSlidingDate = getMonday(d);
+                updateWeekBar();
+            }
+            selectSpecificDate(newIso);
+        }
+
+        function openWeekPicker() {
+            hapticLight();
+            const listEl = document.getElementById("week-picker-list");
+            if (!listEl) return;
+
+            const semStart = getSemesterStart(new Date());
+            const semMonday = getMonday(semStart);
+            const curWeek = getWeekNumber(currentSlidingDate);
+
+            let html = "";
+            for (let w = 1; w <= 18; w++) {
+                const wMonday = new Date(semMonday);
+                wMonday.setDate(semMonday.getDate() + (w - 1) * 7);
+                const wSunday = new Date(wMonday);
+                wSunday.setDate(wMonday.getDate() + 6);
+
+                const isActive = w === curWeek;
+                html += `
+                    <div class="group-item${isActive ? ' active' : ''}" onclick="selectWeek(${w})">
+                        <span style="font-weight: ${isActive ? '700' : '500'};">Неделя ${w}${isActive ? ' (текущая)' : ''}</span>
+                        <span class="group-item-course">${formatShortDateRange(wMonday, wSunday)}</span>
+                    </div>
+                `;
+            }
+            listEl.innerHTML = html;
+
+            document.getElementById("week-overlay").style.display = "block";
+            const drawer = document.getElementById("week-picker-drawer");
+            drawer.style.display = "flex";
+            setTimeout(() => drawer.classList.add("open"), 10);
+        }
+
+        function closeWeekPicker() {
+            const drawer = document.getElementById("week-picker-drawer");
+            drawer.classList.remove("open");
+            setTimeout(() => {
+                drawer.style.display = "none";
+                document.getElementById("week-overlay").style.display = "none";
+            }, 250);
+        }
+
+        function selectWeek(weekNum) {
+            hapticLight();
+            const semStart = getSemesterStart(new Date());
+            const semMonday = getMonday(semStart);
+            currentSlidingDate = new Date(semMonday);
+            currentSlidingDate.setDate(semMonday.getDate() + (weekNum - 1) * 7);
+
+            closeWeekPicker();
+            updateWeekBar();
+            renderWeekStrip();
+            if (activeTab === "week") {
+                renderFullWeek();
+            } else {
+                const mondayIso = getIsoDate(currentSlidingDate);
+                selectSpecificDate(mondayIso);
+            }
+            showToast(`Выбрана неделя ${weekNum}`);
+        }
+
+        function setupSwipeListeners() {
+            const strip = document.getElementById("days-strip");
+            const list = document.getElementById("lessons-list");
+
+            addSwipeHandler(strip, (dir) => {
+                if (dir === "left") slideDays(1);
+                else if (dir === "right") slideDays(-1);
+            });
+
+            addSwipeHandler(list, (dir) => {
+                if (dir === "left") {
+                    if (activeTab === "week") shiftWeek(1);
+                    else stepDay(1);
+                } else if (dir === "right") {
+                    if (activeTab === "week") shiftWeek(-1);
+                    else stepDay(-1);
+                }
+            });
+        }
+
+        function addSwipeHandler(el, callback) {
+            if (!el) return;
+            let startX = 0;
+            let startY = 0;
+            el.addEventListener("touchstart", (e) => {
+                if (e.touches.length === 1) {
+                    startX = e.touches[0].clientX;
+                    startY = e.touches[0].clientY;
+                }
+            }, { passive: true });
+
+            el.addEventListener("touchend", (e) => {
+                if (e.changedTouches.length === 1) {
+                    const diffX = e.changedTouches[0].clientX - startX;
+                    const diffY = e.changedTouches[0].clientY - startY;
+                    if (Math.abs(diffX) > 45 && Math.abs(diffX) > Math.abs(diffY) * 1.4) {
+                        if (diffX < 0) callback("left");
+                        else callback("right");
+                    }
+                }
+            }, { passive: true });
+        }
+
         const DAY_NAMES_SHORT = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
 
         function renderView() {
@@ -1004,8 +1523,8 @@
             tomorrowDate.setDate(tomorrowDate.getDate() + 1);
             const tomorrowStr = getIsoDate(tomorrowDate);
 
-            // Populate week chips
-            renderWeekStrip(now);
+            // Populate 7-day sliding window
+            renderWeekStrip();
 
             if (activeTab === "today") {
                 renderSingleDay(todayStr, formatRuDate(now));
@@ -1020,22 +1539,38 @@
             }
         }
 
-        function renderWeekStrip(currentDate) {
+        function renderWeekStrip() {
             const strip = document.getElementById("days-strip");
+            if (!strip) return;
             strip.innerHTML = "";
 
-            // Find Monday of current week
-            const dayOfWeek = currentDate.getDay();
-            const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-            const monday = new Date(currentDate);
-            monday.setDate(currentDate.getDate() + diffToMonday);
+            const now = new Date();
+            const todayIso = getIsoDate(now);
 
-            for (let i = 0; i < 6; i++) {
-                const d = new Date(monday);
-                d.setDate(monday.getDate() + i);
+            let effectiveSelectedIso = selectedDateStr;
+            if (!effectiveSelectedIso) {
+                if (activeTab === "today") effectiveSelectedIso = todayIso;
+                else if (activeTab === "tomorrow") {
+                    const tm = new Date();
+                    tm.setDate(tm.getDate() + 1);
+                    effectiveSelectedIso = getIsoDate(tm);
+                }
+            }
+
+            for (let i = 0; i < 7; i++) {
+                const d = new Date(currentSlidingDate);
+                d.setDate(currentSlidingDate.getDate() + i);
                 const iso = getIsoDate(d);
+
+                const isToday = iso === todayIso;
+                const isSelected = activeTab !== "week" && iso === effectiveSelectedIso;
+
+                let classes = "day-chip";
+                if (isSelected) classes += " active";
+                if (isToday) classes += " is-today";
+
                 const chip = document.createElement("div");
-                chip.className = "day-chip" + (iso === (selectedDateStr || getIsoDate(currentDate)) ? " active" : "");
+                chip.className = classes;
                 chip.onclick = () => selectSpecificDate(iso);
 
                 chip.innerHTML = `
@@ -1051,7 +1586,10 @@
             selectedDateStr = iso;
             activeTab = "custom";
             document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
-            renderView();
+            renderWeekStrip();
+            const parts = iso.split("-");
+            const targetD = new Date(parts[0], parts[1] - 1, parts[2]);
+            renderSingleDay(iso, formatRuDate(targetD));
         }
 
         function switchTab(tab) {
@@ -1061,6 +1599,28 @@
             document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
             const btn = document.getElementById(`tab-${tab}`);
             if (btn) btn.classList.add("active");
+
+            if (tab === "today") {
+                const now = new Date();
+                const minD = new Date(currentSlidingDate);
+                const maxD = new Date(currentSlidingDate);
+                maxD.setDate(maxD.getDate() + 6);
+                if (now < minD || now > maxD) {
+                    currentSlidingDate = getMonday(now);
+                    updateWeekBar();
+                }
+            } else if (tab === "tomorrow") {
+                const tm = new Date();
+                tm.setDate(tm.getDate() + 1);
+                const minD = new Date(currentSlidingDate);
+                const maxD = new Date(currentSlidingDate);
+                maxD.setDate(maxD.getDate() + 6);
+                if (tm < minD || tm > maxD) {
+                    currentSlidingDate = getMonday(tm);
+                    updateWeekBar();
+                }
+            }
+
             renderView();
         }
 
@@ -1082,7 +1642,7 @@
 
             const dayObj = scheduleData.days[isoDate];
             const lessons = dayObj.lessons || [];
-            document.getElementById("section-count").textContent = `${lessons.len ? lessons.len : lessons.length} пар`;
+            document.getElementById("section-count").textContent = `${lessons.length} пар`;
 
             if (lessons.length === 0) {
                 listEl.innerHTML = `
@@ -1099,7 +1659,11 @@
         }
 
         function renderFullWeek() {
-            document.getElementById("section-date").textContent = "Расписание на неделю";
+            const monday = new Date(currentSlidingDate);
+            const sunday = new Date(currentSlidingDate);
+            sunday.setDate(sunday.getDate() + 6);
+            const months = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
+            document.getElementById("section-date").textContent = `Неделя (${monday.getDate()} ${months[monday.getMonth()]} — ${sunday.getDate()} ${months[sunday.getMonth()]})`;
             document.getElementById("section-count").textContent = "";
             const listEl = document.getElementById("lessons-list");
 
@@ -1114,24 +1678,31 @@
             }
 
             let html = "";
-            const sortedKeys = Object.keys(scheduleData.days).sort();
-            for (const key of sortedKeys) {
-                const dayObj = scheduleData.days[key];
-                if (!dayObj.lessons || dayObj.lessons.length === 0) continue;
-
-                const parts = key.split("-");
-                const d = new Date(parts[0], parts[1] - 1, parts[2]);
-
-                html += `<div style="font-size: 14px; font-weight: 700; margin: 16px 2px 8px 2px; color: var(--accent-color);">${formatRuDate(d)}</div>`;
-                html += dayObj.lessons.map(l => createLessonHtml(l)).join("");
+            let totalLessons = 0;
+            for (let i = 0; i < 7; i++) {
+                const d = new Date(currentSlidingDate);
+                d.setDate(currentSlidingDate.getDate() + i);
+                const iso = getIsoDate(d);
+                const dayObj = scheduleData.days[iso];
+                if (dayObj && dayObj.lessons && dayObj.lessons.length > 0) {
+                    totalLessons += dayObj.lessons.length;
+                    html += `<div style="font-size: 14px; font-weight: 700; margin: 16px 2px 8px 2px; color: var(--accent-color);">${formatRuDate(d)}</div>`;
+                    html += dayObj.lessons.map(l => createLessonHtml(l)).join("");
+                }
             }
 
-            listEl.innerHTML = html || `
-                <div class="empty-state">
-                    <div class="empty-title">Занятий нет</div>
-                    <p class="empty-desc">На этой неделе нет запланированных пар.</p>
-                </div>
-            `;
+            if (totalLessons > 0) {
+                document.getElementById("section-count").textContent = `${totalLessons} пар`;
+                listEl.innerHTML = html;
+            } else {
+                document.getElementById("section-count").textContent = "0 пар";
+                listEl.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-title">Занятий нет</div>
+                        <p class="empty-desc">На этой неделе нет запланированных пар.</p>
+                    </div>
+                `;
+            }
         }
 
         function createLessonHtml(lesson) {
@@ -1247,6 +1818,7 @@
             currentGroup = newGroupName;
             closeGroupDrawer();
             updateGroupUi();
+            updateNotesUi();
             scheduleData = null;
             loadFromLocalCache();
             loadSchedule();
@@ -1325,6 +1897,236 @@
             if (tg && tg.HapticFeedback) {
                 tg.HapticFeedback.impactOccurred("light");
             }
+        }
+
+        // User Notes Management
+        function loadNotes() {
+            try {
+                const raw = localStorage.getItem("maischedule_notes");
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (Array.isArray(parsed)) {
+                        userNotes = parsed;
+                    }
+                }
+            } catch (e) {
+                console.error("Error loading notes from localStorage:", e);
+            }
+            updateNotesUi();
+        }
+
+        function saveNotes() {
+            try {
+                localStorage.setItem("maischedule_notes", JSON.stringify(userNotes));
+            } catch (e) {
+                console.error("Error saving notes to localStorage:", e);
+            }
+            updateNotesUi();
+        }
+
+        function updateNotesUi() {
+            // Update star button state
+            const btnToggle = document.getElementById("btn-toggle-note");
+            const isSaved = userNotes.some(n => n.group === currentGroup);
+            if (btnToggle) {
+                btnToggle.classList.toggle("active-note", isSaved);
+                btnToggle.title = isSaved ? "Управление заметкой группы" : "Добавить группу в заметки";
+            }
+
+            // Update badge count
+            const badge = document.getElementById("notes-badge-count");
+            if (badge) {
+                badge.textContent = String(userNotes.length);
+                badge.style.display = userNotes.length > 0 ? "inline-block" : "none";
+            }
+
+            // Update quick-switch chips in group drawer
+            const sec = document.getElementById("drawer-notes-section");
+            const chipsEl = document.getElementById("drawer-notes-chips");
+            if (sec && chipsEl) {
+                if (userNotes.length > 0) {
+                    sec.style.display = "block";
+                    chipsEl.innerHTML = userNotes.map(n => `
+                        <div class="drawer-note-pill${n.group === currentGroup ? ' active' : ''}" onclick="selectGroup('${escapeHtml(n.group)}')">
+                            ${escapeHtml(n.group)}${n.note_text ? ' (' + escapeHtml(n.note_text) + ')' : ''}
+                        </div>
+                    `).join("");
+                } else {
+                    sec.style.display = "none";
+                }
+            }
+        }
+
+        async function syncNotesWithBackend() {
+            if (!tgUser || !tgUser.id) return;
+            try {
+                const resp = await fetch(`${BASE_URL}/api/user/${tgUser.id}/notes`);
+                if (resp.ok) {
+                    const remoteNotes = await resp.json();
+                    if (Array.isArray(remoteNotes)) {
+                        const notesMap = new Map();
+                        for (const n of userNotes) {
+                            notesMap.set(n.group, n.note_text || "");
+                        }
+                        for (const r of remoteNotes) {
+                            notesMap.set(r.group_name, r.note_text || "");
+                        }
+                        userNotes = Array.from(notesMap.entries()).map(([group, note_text]) => ({ group, note_text }));
+                        saveNotes();
+                    }
+                }
+            } catch (e) {
+                console.error("Error syncing notes with backend:", e);
+            }
+        }
+
+        function toggleCurrentGroupNote() {
+            hapticLight();
+            const existing = userNotes.find(n => n.group === currentGroup);
+            if (existing) {
+                openNoteEditDrawer(currentGroup, existing.note_text);
+            } else {
+                userNotes.push({ group: currentGroup, note_text: "" });
+                saveNotes();
+                syncNoteSave(currentGroup, "");
+                showToast("Группа добавлена в заметки");
+            }
+        }
+
+        function openNotesDrawer() {
+            hapticLight();
+            renderNotesList();
+            document.getElementById("notes-overlay").style.display = "block";
+            const drawer = document.getElementById("notes-drawer");
+            drawer.style.display = "flex";
+            setTimeout(() => drawer.classList.add("open"), 10);
+        }
+
+        function closeNotesDrawer() {
+            const drawer = document.getElementById("notes-drawer");
+            drawer.classList.remove("open");
+            setTimeout(() => {
+                drawer.style.display = "none";
+                document.getElementById("notes-overlay").style.display = "none";
+            }, 250);
+        }
+
+        function renderNotesList() {
+            const listEl = document.getElementById("notes-items-list");
+            if (!listEl) return;
+
+            if (userNotes.length === 0) {
+                listEl.innerHTML = `
+                    <div class="empty-state" style="padding: 24px 12px; margin: 0 0 12px 0;">
+                        <svg class="empty-icon" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+                        <div class="empty-title">Нет заметок</div>
+                        <p class="empty-desc">Сохраняйте группы для быстрого переключения кнопкой со звездочкой вверху.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            listEl.innerHTML = userNotes.map(n => `
+                <div class="note-card">
+                    <div class="note-info" onclick="selectGroup('${escapeHtml(n.group)}'); closeNotesDrawer();">
+                        <div class="note-group-name">${escapeHtml(n.group)}</div>
+                        <div class="note-text-label">${escapeHtml(n.note_text || "Нажмите, чтобы открыть")}</div>
+                    </div>
+                    <div class="note-actions">
+                        <button class="note-icon-btn" onclick="openNoteEditDrawer('${escapeHtml(n.group)}', '${escapeHtml(n.note_text || '')}')" title="Редактировать">
+                            <svg class="icon-svg" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+                        </button>
+                        <button class="note-icon-btn" onclick="deleteNote('${escapeHtml(n.group)}')" title="Удалить">
+                            <svg class="icon-svg" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                        </button>
+                    </div>
+                </div>
+            `).join("");
+        }
+
+        function openNoteEditDrawer(grp, currentText) {
+            hapticLight();
+            editingGroup = grp;
+            document.getElementById("note-edit-title").textContent = `Заметка: ${grp}`;
+            document.getElementById("note-text-input").value = currentText || "";
+
+            document.getElementById("note-edit-overlay").style.display = "block";
+            const drawer = document.getElementById("note-edit-drawer");
+            drawer.style.display = "flex";
+            setTimeout(() => drawer.classList.add("open"), 10);
+            document.getElementById("note-text-input").focus();
+        }
+
+        function closeNoteEditDrawer() {
+            const drawer = document.getElementById("note-edit-drawer");
+            drawer.classList.remove("open");
+            setTimeout(() => {
+                drawer.style.display = "none";
+                document.getElementById("note-edit-overlay").style.display = "none";
+                editingGroup = null;
+            }, 250);
+        }
+
+        function saveNoteFromDrawer() {
+            if (!editingGroup) return;
+            const textVal = document.getElementById("note-text-input").value.trim();
+
+            const idx = userNotes.findIndex(n => n.group === editingGroup);
+            if (idx >= 0) {
+                userNotes[idx].note_text = textVal;
+            } else {
+                userNotes.push({ group: editingGroup, note_text: textVal });
+            }
+
+            saveNotes();
+            syncNoteSave(editingGroup, textVal);
+            closeNoteEditDrawer();
+            if (document.getElementById("notes-drawer").classList.contains("open")) {
+                renderNotesList();
+            }
+            showToast("Заметка сохранена");
+        }
+
+        function deleteNoteFromDrawer() {
+            if (!editingGroup) return;
+            deleteNote(editingGroup);
+            closeNoteEditDrawer();
+        }
+
+        function deleteNote(grp) {
+            hapticLight();
+            userNotes = userNotes.filter(n => n.group !== grp);
+            saveNotes();
+            syncNoteDelete(grp);
+            if (document.getElementById("notes-drawer").classList.contains("open")) {
+                renderNotesList();
+            }
+            showToast("Группа удалена из заметок");
+        }
+
+        function syncNoteSave(groupName, noteText) {
+            if (!tgUser || !tgUser.id) return;
+            fetch(`${BASE_URL}/api/user/notes`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    user_id: tgUser.id,
+                    group_name: groupName,
+                    note_text: noteText
+                })
+            }).catch(e => console.error("Error saving note to backend:", e));
+        }
+
+        function syncNoteDelete(groupName) {
+            if (!tgUser || !tgUser.id) return;
+            fetch(`${BASE_URL}/api/user/notes/delete`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    user_id: tgUser.id,
+                    group_name: groupName
+                })
+            }).catch(e => console.error("Error deleting note from backend:", e));
         }
 
         // Run
