@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{watch, Semaphore};
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use crate::api::{fetch_groups, fetch_schedule};
 use crate::config::Config;
@@ -209,13 +209,8 @@ async fn check_single_group(
             }
         }
         Err(e) => {
-            if crate::api::snapshot_mode() {
-                // Источник — локальный снапшот: недоступность public.mai.ru тут ни при чём
-                debug!("Группы {} нет в снапшоте: {}", group, e);
-            } else {
-                let _ = db.record_schedule_server_failure(&e.to_string()).await;
-                warn!("Не удалось загрузить расписание для группы {}: {:?}", group, e);
-            }
+            let _ = db.record_schedule_server_failure(&e.to_string()).await;
+            warn!("Не удалось загрузить расписание для группы {}: {:?}", group, e);
         }
     }
 }
@@ -293,11 +288,7 @@ async fn sync_all_group_schedules(
                     }
                 }
                 Err(e) => {
-                    if crate::api::snapshot_mode() {
-                        debug!("[{}/{}] Группы {} нет в снапшоте", current_num, total, group_clone);
-                    } else {
-                        warn!("[{}/{}] Не удалось загрузить расписание для группы {}: {:?}", current_num, total, group_clone, e);
-                    }
+                    warn!("[{}/{}] Не удалось загрузить расписание для группы {}: {:?}", current_num, total, group_clone, e);
                 }
             }
         });

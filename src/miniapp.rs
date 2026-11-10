@@ -32,8 +32,6 @@ mod tests {
             db_path: ":memory:".to_string(),
             timezone: "Europe/Moscow".to_string(),
             alert_minutes_before: 15,
-            snapshot_dir: String::new(),
-            ingest_token: String::new(),
         };
 
         let html = render_miniapp_html(&config, None);
